@@ -10,7 +10,7 @@
 ```bash
 cd nasolneosol
 npm install
-npm run dev          # http://localhost:8080  (10배속 + 개발도구: 봇 채우기)
+npm run dev          # http://localhost:8080  (10배속 + 개발도구: 봇 채우기, 윈도우에서도 동작)
 npm start            # 실제 시간, 개발도구 꺼짐
 npm test             # 진행 엔진 단위 테스트
 npm run sim          # 실제 WebSocket 클라이언트 12개로 전체 회차 진행 + 트래픽 측정

@@ -22,6 +22,12 @@ import { BotDriver, botProfile, botPhotoSvg } from './bots.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// --dev: 윈도우/맥/리눅스 공통으로 개발 모드 기본값 (10배속 + 봇 채우기)
+if (process.argv.includes('--dev')) {
+  process.env.TIME_SCALE ??= '10';
+  process.env.DEV_TOOLS ??= '1';
+}
+
 export function createServer(opts = {}) {
   const env = { ...process.env, ...opts.env };
   const timeScale = Number(env.TIME_SCALE || 1);

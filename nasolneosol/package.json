@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "TIME_SCALE=10 DEV_TOOLS=1 node server/index.js",
+    "dev": "node server/index.js --dev",
     "test": "node --test test/*.test.js",
     "sim": "node scripts/simulate.js",
     "icons": "node scripts/make-icons.js"
