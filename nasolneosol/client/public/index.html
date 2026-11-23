@@ -74,10 +74,12 @@
   <section id="screen-game" class="screen" hidden>
     <canvas id="scene"></canvas>
     <header class="hud">
-      <div class="phase"><span id="phase-name"></span><span id="phase-sub" class="muted"></span></div>
-      <div class="timer" id="timer">--:--</div>
-      <div class="voice-badge" id="voice-badge"></div>
+      <div class="loc-pill"><b>나솔너솔</b><span class="sep"></span><span id="loc">📍</span></div>
+      <div class="phase-badge" id="phase-badge"><span id="phase-name"></span><span id="timer" class="timer">--:--</span></div>
+      <div class="map-wrap"><canvas id="minimap" width="120" height="96"></canvas><div class="count" id="count"></div></div>
     </header>
+    <div class="sub-row"><span id="phase-sub"></span><span class="voice-badge" id="voice-badge"></span></div>
+    <div id="joystick" class="joystick" hidden><div class="knob" id="knob"></div></div>
     <div id="toast" class="toast" hidden></div>
     <div id="intro-stage" class="intro-stage" hidden></div>
     <div id="panel" class="panel"></div>

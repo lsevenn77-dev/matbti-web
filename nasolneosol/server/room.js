@@ -9,6 +9,8 @@ import { ALIASES, CHARACTERS } from './config.js';
 
 const OTHER = { male: 'female', female: 'male' };
 const DATE_PHASES = new Set(['date1', 'date2', 'date3']);
+// 자유 구경 이동 범위 (client/public/scene.js 의 월드 배치와 맞춘다)
+export const WORLD = { minX: -24, maxX: 24, minZ: -26, maxZ: 10 };
 
 export class Room {
   /**
@@ -396,7 +398,7 @@ export class Room {
     const fn = this[`act_${action?.type}`];
     if (!fn) return fail('알 수 없는 행동');
     const r = fn.call(this, p, action);
-    if (r?.ok) this.markDirty();
+    if (r?.ok && !r.silent) this.markDirty(); // 채팅·이동은 전체 상태를 다시 보내지 않는다
     return r ?? { ok: true };
   }
 
@@ -481,8 +483,12 @@ export class Room {
   act_move(p, { x, z }) {
     if (this.phase !== 'freeRoam') return fail('자유 구경 시간에만 이동할 수 있다');
     if (!Number.isFinite(x) || !Number.isFinite(z)) return fail('잘못된 좌표');
-    p.pos = { x: clamp(x, -14, 14), z: clamp(z, -6, 6) };
-    return { ok: true };
+    const t = this.now();
+    if (p.lastMoveAt && t - p.lastMoveAt < 80) return { ok: true, silent: true }; // 초당 약 12회 제한
+    p.lastMoveAt = t;
+    p.pos = { x: clamp(x, WORLD.minX, WORLD.maxX), z: clamp(z, WORLD.minZ, WORLD.maxZ) };
+    for (const fn of this.listeners) fn({ type: 'pos', id: p.id, ...p.pos });
+    return { ok: true, silent: true };
   }
 
   act_chat(p, { channel, text }) {

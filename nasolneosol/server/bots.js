@@ -90,7 +90,7 @@ export class BotDriver {
       } else if (r.phase === 'contact' && r.matchOf(b.id) && !(b.id in r.contact)) {
         r.handle(b.id, { type: 'contact', consent: true, contact: `bot-${b.alias}@example.invalid` });
       } else if (r.phase === 'freeRoam') {
-        r.handle(b.id, { type: 'move', x: (this.rng() - 0.5) * 24, z: (this.rng() - 0.5) * 10 });
+        r.handle(b.id, { type: 'move', x: (this.rng() - 0.5) * 30, z: -8 + (this.rng() - 0.5) * 20 });
       }
       if (this.rng() < 0.15) {
         const ch = r.channelsFor(b.id);

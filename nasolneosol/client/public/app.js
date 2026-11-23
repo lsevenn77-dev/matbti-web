@@ -1,5 +1,5 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene } from './scene.js';
+import { GameScene, zoneLabel } from './scene.js';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -220,6 +220,8 @@ function onMessage(m) {
     showLobby(m.status);
   } else if (m.t === 'state') {
     onState(m.view);
+  } else if (m.t === 'pos') {
+    st.scene?.setRemotePos(m.id, m.x, m.z);
   } else if (m.t === 'chat') {
     addChat(m.message);
   } else if (m.t === 'ack') {
@@ -263,6 +265,7 @@ function name(id) {
 
 function phaseToast(v) {
   if (v.phase === 'firstVote') return v.voterGender === v.me.gender ? '첫인상 선택 시간이야. 사진을 보고 한 명을 골라 줘.' : `이번 회차는 ${G[v.voterGender]}가 선택해. 기다려 줘.`;
+  if (v.phase === 'freeRoam') return '자유 구경! 조이스틱이나 바닥을 눌러 이동해. 캐릭터를 누르면 프로필, 대화는 텍스트로.';
   if (v.myDate) return `${PHASE_NAMES[v.phase]} 시작! 같은 그룹끼리만 음성이 연결돼 (모의).`;
   if (v.phase.startsWith('date')) return '이번 데이트에는 참여하지 않아. 숙소에서 텍스트로 대화할 수 있어.';
   return `${PHASE_NAMES[v.phase]}`;
@@ -278,6 +281,11 @@ function renderHud() {
   else if (v.phase === 'selfIntro' && v.intro) sub = `${Math.min(v.intro.index + 1, v.intro.order.length)} / ${v.intro.order.length}번째`;
   else sub = `나는 ${v.me.alias}`;
   $('#phase-sub').textContent = sub;
+
+  $('#loc').textContent = `📍 ${zoneLabel(v.zones[v.me.id])}`;
+  $('#phase-badge').classList.toggle('date', !!v.myDate);
+  $('#count').textContent = `👤 ${v.participants.filter((p) => p.connected).length}/${v.participants.length}`;
+  $('#joystick').hidden = v.phase !== 'freeRoam';
 
   const vb = $('#voice-badge');
   if (v.voice?.publish && v.phase === 'selfIntro') vb.textContent = '🎙 내 차례 · 송출 중(모의)';
@@ -304,7 +312,56 @@ setInterval(() => {
   const s = Math.ceil(left / 1000);
   $('#timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   if (st.view.phase === 'minigame') renderMinigameTick();
+  st.scene?.drawMinimap($('#minimap'));
 }, 200);
+
+// ───────────── 조이스틱 (자유 구경) ─────────────
+const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };
+{
+  const el = $('#joystick');
+  const knob = $('#knob');
+  const setFrom = (e) => {
+    const r = el.getBoundingClientRect();
+    let x = e.clientX - (r.left + r.width / 2);
+    let y = e.clientY - (r.top + r.height / 2);
+    const max = r.width / 2 - 14;
+    const len = Math.hypot(x, y);
+    if (len > max) {
+      x = (x / len) * max;
+      y = (y / len) * max;
+    }
+    knob.style.transform = `translate(${x}px, ${y}px)`;
+    joy.dx = x / max;
+    joy.dz = y / max; // 화면 아래 = +z
+  };
+  el.addEventListener('pointerdown', (e) => {
+    joy.active = true;
+    el.setPointerCapture(e.pointerId);
+    setFrom(e);
+  });
+  el.addEventListener('pointermove', (e) => joy.active && setFrom(e));
+  const end = () => {
+    joy.active = false;
+    joy.dx = joy.dz = 0;
+    knob.style.transform = '';
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  let last = performance.now();
+  const loop = (now) => {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    if (joy.active && st.scene && st.view?.phase === 'freeRoam' && (joy.dx || joy.dz)) {
+      const p = st.scene.moveLocal(joy.dx, joy.dz, dt);
+      if (p && now - joy.lastSend > 120) {
+        joy.lastSend = now;
+        sendWs({ t: 'act', action: { type: 'move', x: p.x, z: p.z } });
+      }
+    }
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+}
 
 function pcard(p, { sel = false, off = false, tag = '' } = {}) {
   return `<div class="pcard${sel ? ' sel' : ''}${off ? ' off' : ''}" data-pid="${p.id}">${tag ? `<span class="tag">${esc(tag)}</span>` : ''}<img src="${esc(p.photoUrl)}" alt="${esc(p.alias)} 프로필 사진" loading="lazy" /><div>${esc(p.alias)}</div></div>`;
@@ -348,7 +405,7 @@ function renderPanel() {
       }
       break;
     case 'freeRoam':
-      h = `<div class="box"><h3>자유 구경</h3><p>바닥을 누르면 이동해. 캐릭터를 누르면 프로필을 볼 수 있어. 대화는 텍스트로.</p></div>`;
+      h = ''; // 장면을 가리지 않도록 안내는 알림으로만
       break;
     case 'selfIntro':
       h = renderIntro(stage);
@@ -399,8 +456,8 @@ function renderIntro(stage) {
     stage.hidden = false;
   }
   if (it.speakerId === v.me.id) {
-    return `<div class="box"><h3>내 자기소개 차례야</h3><p>지금은 나만 말할 수 있어 (음성은 모의). 다른 사람들은 듣고 텍스트로 질문할 수 있어.</p>
-      <p class="muted">예시: 하는 일, 사는 동네, 주말에 하는 것, 이상형</p><button class="btn primary" id="btn-intro-done">소개 마치기</button></div>`;
+    return `<div class="box"><h3>🎙 내 차례 · 나만 말할 수 있어 (모의)</h3>
+      <p class="muted small">하는 일 · 사는 동네 · 주말 · 이상형. 질문은 채팅으로 와.</p><button class="btn primary" id="btn-intro-done">소개 마치기</button></div>`;
   }
   if (!it.speakerId) return `<div class="box"><h3>다음 발표자 준비 중…</h3></div>`;
   return `<div class="box"><p>${esc(name(it.speakerId))}의 소개를 듣는 중. 궁금한 건 아래 채팅으로 질문해 줘.</p></div>`;
