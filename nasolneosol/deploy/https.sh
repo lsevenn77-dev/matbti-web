@@ -56,6 +56,9 @@ mkdir -p /etc/caddy /var/lib/caddy
 if [ "$CF" = 1 ]; then
   # Cloudflare 가 브라우저용 인증서를 담당. 서버는 80(Flexible)과 443(Full, 자체 인증서) 둘 다 받는다.
   cat > /etc/caddy/Caddyfile <<EOF
+{
+	skip_install_trust
+}
 http://$DOMAIN, https://$DOMAIN {
 	tls internal
 	encode gzip
