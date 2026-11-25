@@ -17,9 +17,14 @@ say "도메인 확인: $DOMAIN"
 myip=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)
 dnsip=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}' || true)
 echo "  이 서버 IP: ${myip:-알 수 없음} / $DOMAIN → ${dnsip:-아직 연결 안 됨}"
-if [ -z "$dnsip" ] || { [ -n "$myip" ] && [ "$dnsip" != "$myip" ]; }; then
-  echo "  도메인이 아직 이 서버를 가리키지 않아. 카페24 DNS 관리에서 A 레코드를 추가하고"
-  echo "  몇 분(최대 몇 시간) 뒤에 다시 실행해 줘. (인증서 발급 실패를 막으려고 여기서 멈춤)"
+CF=0
+if curl -sI --max-time 8 "http://$DOMAIN/" 2>/dev/null | grep -qi '^server: *cloudflare'; then
+  CF=1
+  echo "  Cloudflare 프록시(주황 구름)를 거치고 있어 → Cloudflare 뒤에서 동작하는 방식으로 설정할게."
+  echo "  (Cloudflare DNS 의 nasol A 레코드 값은 ${myip:-이 서버 IP} 이어야 해)"
+elif [ -z "$dnsip" ] || { [ -n "$myip" ] && [ "$dnsip" != "$myip" ]; }; then
+  echo "  도메인이 아직 이 서버를 가리키지 않아. DNS 에서 A 레코드를 추가하고"
+  echo "  몇 분 뒤에 다시 실행해 줘. (인증서 발급 실패를 막으려고 여기서 멈춤)"
   exit 1
 fi
 
@@ -48,12 +53,23 @@ fi
 
 say "설정 작성"
 mkdir -p /etc/caddy /var/lib/caddy
-cat > /etc/caddy/Caddyfile <<EOF
+if [ "$CF" = 1 ]; then
+  # Cloudflare 가 브라우저용 인증서를 담당. 서버는 80(Flexible)과 443(Full, 자체 인증서) 둘 다 받는다.
+  cat > /etc/caddy/Caddyfile <<EOF
+http://$DOMAIN, https://$DOMAIN {
+	tls internal
+	encode gzip
+	reverse_proxy 127.0.0.1:$PORT
+}
+EOF
+else
+  cat > /etc/caddy/Caddyfile <<EOF
 $DOMAIN {
 	encode gzip
 	reverse_proxy 127.0.0.1:$PORT
 }
 EOF
+fi
 cat > /etc/systemd/system/caddy.service <<'EOF'
 [Unit]
 Description=Caddy (HTTPS for nasolneosol)
@@ -99,4 +115,8 @@ if [ "$ok" = 1 ]; then
 else
   say "아직 https 응답이 없어. 로그: journalctl -u caddy -n 50"
   echo "  흔한 원인: 카페24 '방화벽 서비스'에서 TCP 80, 443 이 막혀 있음 → 허용 후 systemctl restart caddy"
+  if [ "$CF" = 1 ]; then
+    echo "  Cloudflare 확인: nasol A 레코드 값이 $myip 인지, SSL/TLS 모드가 'Full (strict)' 가 아닌지 (Flexible 또는 Full)"
+    curl -sk --max-time 5 -o /dev/null -w "  서버 직접(443) 응답: %{http_code}\n" --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/info" || true
+  fi
 fi
