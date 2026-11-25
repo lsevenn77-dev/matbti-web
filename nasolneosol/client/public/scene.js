@@ -766,7 +766,13 @@ export class GameScene {
     const loader = new GLTFLoader();
     await Promise.all(Object.entries(manifest).map(async ([cid, url]) => {
       try {
-        this.models[cid] = await loader.loadAsync(url);
+        const gltf = await loader.loadAsync(url);
+        try {
+          fixTextureSeams(gltf); // 생성 모델의 흰 이음매 보정
+        } catch (e) {
+          console.warn('seam fix failed', cid, e);
+        }
+        this.models[cid] = gltf;
         for (const c of this.chars.values()) if (c.characterId === cid) this.attachModel(c);
       } catch (e) {
         console.warn('model load failed', cid, e);
@@ -1184,6 +1190,115 @@ function labelTexture(text, { size = 40, bg, color, pad = 16, radius = 999 }) {
   tex.anisotropy = 4;
   return tex;
 }
+/**
+ * 텍스처 이음매 보정.
+ * AI 생성 모델은 UV 조각 바깥(여백)이 흰색으로 남아, 이음매에서 흰 금처럼 비친다.
+ * 메쉬의 UV 삼각형으로 '실제로 칠해진 영역'을 구하고, 여백을 가장 가까운 칠해진 색으로 채운다.
+ */
+export function fixTextureSeams(gltf, { pad = 24 } = {}) {
+  const users = new Map(); // texture → [geometry]
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry.attributes.uv) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (m?.map?.image) {
+        if (!users.has(m.map)) users.set(m.map, []);
+        users.get(m.map).push(o.geometry);
+      }
+    }
+  });
+  const replaced = new Map();
+  for (const [tex, geos] of users) {
+    const img = tex.image;
+    const W = img.width;
+    const H = img.height;
+    if (!W || !H || W * H > 4096 * 4096) continue;
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, W, H);
+    // UV 삼각형으로 칠해진 영역 마스크
+    const mc = document.createElement('canvas');
+    mc.width = W;
+    mc.height = H;
+    const mx = mc.getContext('2d', { willReadFrequently: true });
+    mx.fillStyle = '#000';
+    mx.fillRect(0, 0, W, H);
+    mx.fillStyle = '#fff';
+    mx.beginPath();
+    const flip = tex.flipY; // glTF 는 보통 false (v 가 위에서 아래)
+    for (const g of geos) {
+      const uv = g.attributes.uv;
+      const idx = g.index;
+      const n = idx ? idx.count : uv.count;
+      const P = (i) => {
+        const k = idx ? idx.getX(i) : i;
+        const u = uv.getX(k);
+        const v = uv.getY(k);
+        return [u * W, (flip ? 1 - v : v) * H];
+      };
+      for (let i = 0; i + 2 < n; i += 3) {
+        const [ax, ay] = P(i);
+        const [bx, by] = P(i + 1);
+        const [cx2, cy2] = P(i + 2);
+        mx.moveTo(ax, ay);
+        mx.lineTo(bx, by);
+        mx.lineTo(cx2, cy2);
+        mx.closePath();
+      }
+    }
+    mx.fill();
+    const mask = mx.getImageData(0, 0, W, H).data;
+    // 완전히 안쪽(경계에 걸친 픽셀 제외)만 '칠해짐'으로 보고, 나머지를 BFS 로 가장 가까운 색으로 채움
+    const N = W * H;
+    const dist = new Uint8Array(N).fill(255);
+    const q = new Int32Array(N);
+    let qh = 0;
+    let qt = 0;
+    for (let i = 0; i < N; i++) {
+      if (mask[i * 4] === 255) {
+        dist[i] = 0;
+        q[qt++] = i;
+      }
+    }
+    if (qt === 0 || qt === N) continue;
+    const px = data.data;
+    while (qh < qt) {
+      const i = q[qh++];
+      const d = dist[i];
+      if (d >= pad) continue;
+      const x = i % W;
+      const y = (i / W) | 0;
+      const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
+      for (const j of nb) {
+        if (j < 0 || dist[j] !== 255) continue;
+        dist[j] = d + 1;
+        px[j * 4] = px[i * 4];
+        px[j * 4 + 1] = px[i * 4 + 1];
+        px[j * 4 + 2] = px[i * 4 + 2];
+        px[j * 4 + 3] = px[i * 4 + 3];
+        q[qt++] = j;
+      }
+    }
+    ctx.putImageData(data, 0, 0);
+    const nt = new THREE.CanvasTexture(cv);
+    for (const k of ['flipY', 'wrapS', 'wrapT', 'magFilter', 'minFilter', 'anisotropy', 'colorSpace', 'channel']) nt[k] = tex[k];
+    nt.needsUpdate = true;
+    replaced.set(tex, nt);
+  }
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (m?.map && replaced.has(m.map)) {
+        m.map = replaced.get(m.map);
+        m.needsUpdate = true;
+      }
+    }
+  });
+  return replaced.size;
+}
+
 function makeBadges(alias, gender) {
   const tex = labelTexture(alias, { size: 56, bg: '#fffaf2', color: gender === 'male' ? '#2f4f7f' : '#9a3f55', pad: 18, radius: 14 });
   const w = Math.min(0.62, 0.17 * alias.length + 0.18);
