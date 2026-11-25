@@ -80,6 +80,7 @@ export class GameScene {
     this.clock = new THREE.Clock();
     this.speaking = new Set();
     this.localPos = null; // 자유 구경 중 내 예측 위치
+    window.__nsnsScene = this; // 진단용
     this.models = {}; // characterId → gltf (최종 3D 자산). 없으면 코드 캐릭터 사용
     this.buildWorld();
     this.bindInput();
@@ -793,6 +794,12 @@ export class GameScene {
     const box2 = measure();
     const center = box2.getCenter(new THREE.Vector3());
     model.position.set(-center.x, -box2.min.y, -center.z);
+    // 진단용 정보 (콘솔에서 window.__nsnsScene 으로 확인 가능)
+    const meshes = [];
+    model.traverse((o) => o.isMesh && meshes.push({ name: o.name, skinned: !!o.isSkinnedMesh, verts: o.geometry.attributes.position.count, mat: o.material?.type, transparent: o.material?.transparent, opacity: o.material?.opacity, visible: o.visible }));
+    const r2 = (v) => v.toArray().map((x) => Math.round(x * 1000) / 1000);
+    c.modelDebug = { sizeBefore: r2(size), k: Math.round(k * 10000) / 10000, boxAfter: [r2(box2.min), r2(box2.max)], rootScale: r2(gltf.scene.scale), meshes };
+    console.info('model debug', JSON.stringify(c.modelDebug));
     model.traverse((o) => {
       if (o.isMesh) {
         o.castShadow = true;
