@@ -415,7 +415,15 @@ export class GameScene {
         g.add(leaf);
       }
       g.position.set(x, 0, z);
+      // 카메라 시야를 가릴 때 반투명하게 하려고 나무마다 재질을 따로 둔다
+      g.traverse((o) => {
+        if (o.material) {
+          o.material = o.material.clone();
+          o.material.transparent = true;
+        }
+      });
       this.scene.add(g);
+      (this.trees ??= []).push({ g, x, z, r: 1.4 * s, fade: 1 });
     };
     const spots = [[-22, -6], [-20, 6], [22, -6], [20, 6], [-9, -6], [9, -6], [-12, -12], [12, -12], [-24, -14], [24, -14],
       [-6, -20], [6, -20], [-11, -23], [11, -23], [-20, -24], [20, -24], [-4, -27], [4, -27], [-26, 0], [26, 0], [-7, 8], [7, 8]];
@@ -767,11 +775,7 @@ export class GameScene {
     await Promise.all(Object.entries(manifest).map(async ([cid, url]) => {
       try {
         const gltf = await loader.loadAsync(url);
-        try {
-          fixTextureSeams(gltf); // 생성 모델의 흰 이음매 보정
-        } catch (e) {
-          console.warn('seam fix failed', cid, e);
-        }
+        disableMipmaps(gltf); // 생성 모델의 이음매 색 번짐(흰·노란 줄) 방지
         this.models[cid] = gltf;
         for (const c of this.chars.values()) if (c.characterId === cid) this.attachModel(c);
       } catch (e) {
@@ -1072,6 +1076,33 @@ export class GameScene {
         });
       }
     }
+    // 카메라와 보고 있는 지점 사이에 있는 나무는 반투명하게 (데이트 장소 등을 가리지 않게)
+    {
+      const cx = this.camera.position.x;
+      const cz = this.camera.position.z;
+      const tx = this.camLook.x;
+      const tz = this.camLook.z;
+      const dx = tx - cx;
+      const dz = tz - cz;
+      const len2 = dx * dx + dz * dz || 1;
+      for (const tr of this.trees ?? []) {
+        const t = ((tr.x - cx) * dx + (tr.z - cz) * dz) / len2;
+        const px = cx + dx * t - tr.x;
+        const pz = cz + dz * t - tr.z;
+        const blocks = t > 0 && t < 1.08 && px * px + pz * pz < (tr.r + 1.2) ** 2;
+        const goal = blocks ? 0.18 : 1;
+        if (Math.abs(tr.fade - goal) > 0.01) {
+          tr.fade += (goal - tr.fade) * Math.min(1, dt * 6);
+          tr.g.traverse((o) => {
+            if (o.material) {
+              o.material.opacity = tr.fade;
+              o.material.depthWrite = tr.fade > 0.95;
+            }
+          });
+          tr.g.traverse((o) => (o.castShadow = tr.fade > 0.95));
+        }
+      }
+    }
     for (const cl of this.clouds) {
       cl.position.x += dt * 0.6;
       if (cl.position.x > 70) cl.position.x = -70;
@@ -1191,112 +1222,24 @@ function labelTexture(text, { size = 40, bg, color, pad = 16, radius = 999 }) {
   return tex;
 }
 /**
- * 텍스처 이음매 보정.
- * AI 생성 모델은 UV 조각 바깥(여백)이 흰색으로 남아, 이음매에서 흰 금처럼 비친다.
- * 메쉬의 UV 삼각형으로 '실제로 칠해진 영역'을 구하고, 여백을 가장 가까운 칠해진 색으로 채운다.
+ * AI 생성 모델(Meshy 등)은 텍스처 조각(UV 섬)이 여백 없이 촘촘히 붙어 있어,
+ * 축소판(밉맵)에서 옆 조각 색이 섞여 머리에 노란 줄, 바지에 흰 줄 같은 금이 생긴다.
+ * 밉맵을 끄면 사라진다 (Higgsfield 샌드박스 렌더 비교로 확인).
  */
-export function fixTextureSeams(gltf, { pad = 24 } = {}) {
-  const users = new Map(); // texture → [geometry]
-  gltf.scene.traverse((o) => {
-    if (!o.isMesh || !o.geometry.attributes.uv) return;
-    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-      if (m?.map?.image) {
-        if (!users.has(m.map)) users.set(m.map, []);
-        users.get(m.map).push(o.geometry);
-      }
-    }
-  });
-  const replaced = new Map();
-  for (const [tex, geos] of users) {
-    const img = tex.image;
-    const W = img.width;
-    const H = img.height;
-    if (!W || !H || W * H > 4096 * 4096) continue;
-    const cv = document.createElement('canvas');
-    cv.width = W;
-    cv.height = H;
-    const ctx = cv.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(img, 0, 0);
-    const data = ctx.getImageData(0, 0, W, H);
-    // UV 삼각형으로 칠해진 영역 마스크
-    const mc = document.createElement('canvas');
-    mc.width = W;
-    mc.height = H;
-    const mx = mc.getContext('2d', { willReadFrequently: true });
-    mx.fillStyle = '#000';
-    mx.fillRect(0, 0, W, H);
-    mx.fillStyle = '#fff';
-    mx.beginPath();
-    const flip = tex.flipY; // glTF 는 보통 false (v 가 위에서 아래)
-    for (const g of geos) {
-      const uv = g.attributes.uv;
-      const idx = g.index;
-      const n = idx ? idx.count : uv.count;
-      const P = (i) => {
-        const k = idx ? idx.getX(i) : i;
-        const u = uv.getX(k);
-        const v = uv.getY(k);
-        return [u * W, (flip ? 1 - v : v) * H];
-      };
-      for (let i = 0; i + 2 < n; i += 3) {
-        const [ax, ay] = P(i);
-        const [bx, by] = P(i + 1);
-        const [cx2, cy2] = P(i + 2);
-        mx.moveTo(ax, ay);
-        mx.lineTo(bx, by);
-        mx.lineTo(cx2, cy2);
-        mx.closePath();
-      }
-    }
-    mx.fill();
-    const mask = mx.getImageData(0, 0, W, H).data;
-    // 완전히 안쪽(경계에 걸친 픽셀 제외)만 '칠해짐'으로 보고, 나머지를 BFS 로 가장 가까운 색으로 채움
-    const N = W * H;
-    const dist = new Uint8Array(N).fill(255);
-    const q = new Int32Array(N);
-    let qh = 0;
-    let qt = 0;
-    for (let i = 0; i < N; i++) {
-      if (mask[i * 4] === 255) {
-        dist[i] = 0;
-        q[qt++] = i;
-      }
-    }
-    if (qt === 0 || qt === N) continue;
-    const px = data.data;
-    while (qh < qt) {
-      const i = q[qh++];
-      const d = dist[i];
-      if (d >= pad) continue;
-      const x = i % W;
-      const y = (i / W) | 0;
-      const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
-      for (const j of nb) {
-        if (j < 0 || dist[j] !== 255) continue;
-        dist[j] = d + 1;
-        px[j * 4] = px[i * 4];
-        px[j * 4 + 1] = px[i * 4 + 1];
-        px[j * 4 + 2] = px[i * 4 + 2];
-        px[j * 4 + 3] = px[i * 4 + 3];
-        q[qt++] = j;
-      }
-    }
-    ctx.putImageData(data, 0, 0);
-    const nt = new THREE.CanvasTexture(cv);
-    for (const k of ['flipY', 'wrapS', 'wrapT', 'magFilter', 'minFilter', 'anisotropy', 'colorSpace', 'channel']) nt[k] = tex[k];
-    nt.needsUpdate = true;
-    replaced.set(tex, nt);
-  }
+export function disableMipmaps(gltf) {
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
     for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-      if (m?.map && replaced.has(m.map)) {
-        m.map = replaced.get(m.map);
-        m.needsUpdate = true;
+      for (const k of ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
+        const t = m?.[k];
+        if (t && t.generateMipmaps !== false) {
+          t.generateMipmaps = false;
+          t.minFilter = THREE.LinearFilter;
+          t.needsUpdate = true;
+        }
       }
     }
   });
-  return replaced.size;
 }
 
 function makeBadges(alias, gender) {
