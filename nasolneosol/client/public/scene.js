@@ -774,12 +774,23 @@ export class GameScene {
     const gltf = this.models[c.characterId];
     if (!gltf || c.model) return;
     const model = SkeletonUtils.clone(gltf.scene);
-    // 높이를 코드 캐릭터와 비슷하게(약 2.3) 맞추고 발을 바닥에
-    const box = new THREE.Box3().setFromObject(model);
+    // 높이를 코드 캐릭터와 비슷하게(약 2.3) 맞추고 발을 바닥에.
+    // 뼈대 모델은 뼈 행렬을 먼저 갱신해야 실제(스키닝된) 크기가 나온다. (Armature 0.01 배율 등)
+    const measure = () => {
+      model.updateMatrixWorld(true);
+      model.traverse((o) => {
+        if (o.isSkinnedMesh) {
+          o.skeleton.update();
+          o.computeBoundingBox();
+        }
+      });
+      return new THREE.Box3().setFromObject(model, true);
+    };
+    const box = measure();
     const size = box.getSize(new THREE.Vector3());
     const k = 2.3 / Math.max(size.y, 0.001);
-    model.scale.setScalar(k);
-    const box2 = new THREE.Box3().setFromObject(model);
+    model.scale.multiplyScalar(k);
+    const box2 = measure();
     const center = box2.getCenter(new THREE.Vector3());
     model.position.set(-center.x, -box2.min.y, -center.z);
     model.traverse((o) => {

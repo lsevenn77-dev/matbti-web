@@ -217,6 +217,7 @@ function onMessage(m) {
     st.me = m.me;
   } else if (m.t === 'queue') {
     st.view = null;
+    if (st.swReg?.waiting) st.swReg.waiting.postMessage('skipWaiting');
     showLobby(m.status);
   } else if (m.t === 'state') {
     onState(m.view);
@@ -633,14 +634,30 @@ function toast(t) {
 // ───────────── PWA ─────────────
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
+  // 게임 중이 아니면(가입·대기 화면) 새 버전을 바로 적용한다. 게임 중이면 끝난 뒤 적용.
+  const applyIfIdle = (reg) => {
+    if (!reg.waiting) return;
+    if (st.view && st.view.phase !== 'ended') {
+      $('#update-bar').hidden = false;
+      return;
+    }
+    reg.waiting.postMessage('skipWaiting');
+  };
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading || (st.view && st.view.phase !== 'ended')) return;
+    reloading = true;
+    location.reload();
+  });
   navigator.serviceWorker.register('/sw.js').then((reg) => {
+    applyIfIdle(reg);
     reg.addEventListener('updatefound', () => {
       const nw = reg.installing;
       nw?.addEventListener('statechange', () => {
-        // 진행 중인 게임을 강제로 새로고침하지 않는다. 다음 실행 때 적용.
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) $('#update-bar').hidden = false;
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) applyIfIdle(reg);
       });
     });
+    st.swReg = reg;
   }).catch(() => {});
 }
 
