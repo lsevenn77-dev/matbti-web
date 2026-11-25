@@ -318,12 +318,15 @@ export class GameScene {
     for (const fx of [-W / 2 + 1.4, W / 2 - 1.4]) {
       const box = mesh(new THREE.BoxGeometry(1.8, 0.45, 0.7), '#a8693a');
       box.position.set(fx, 0.22, D / 2 + 0.8);
+      box.userData.planter = true;
       g.add(box);
       for (let i = -1; i <= 1; i++) {
         const b2 = mesh(new THREE.IcosahedronGeometry(0.36, 0), '#5e9d4a');
         b2.position.set(fx + i * 0.5, 0.6, D / 2 + 0.8);
+        b2.userData.planter = true;
         g.add(b2);
       }
+      (this.planterSpots ??= []).push({ g, x: fx, z: D / 2 + 0.8 });
       colliders.push({ minX: x + fx - 0.9, maxX: x + fx + 0.9, minZ: z + D / 2 + 0.45, maxZ: z + D / 2 + 1.15 });
     }
     g.position.set(x, 0, z);
@@ -387,6 +390,7 @@ export class GameScene {
     cap.position.set(x, 2.25, z);
     cap.rotation.y = Math.PI / 4;
     this.scene.add(p, head, cap);
+    (this.lampPosts ??= []).push({ x, z, pole: p, head, cap });
   }
 
   buildStream() {
@@ -421,6 +425,7 @@ export class GameScene {
         r.scale.y = 0.55;
         r.rotation.set(rng(), rng() * 6, rng());
         this.scene.add(r);
+        (this.rockMeshes ??= []).push(r);
       }
     }
   }
@@ -510,7 +515,7 @@ export class GameScene {
         }
       });
       this.scene.add(g);
-      (this.trees ??= []).push({ g, x, z, r: 1.4 * s, fade: 1 });
+      (this.trees ??= []).push({ g, x, z, s, r: 1.4 * s, fade: 1 });
     };
     const spots = [[-22, -6], [-20, 6], [22, -6], [20, 6], [-9, -6], [9, -6], [-12, -12], [12, -12], [-24, -14], [24, -14],
       [-6, -20], [6, -20], [-11, -23], [11, -23], [-20, -24], [20, -24], [-4, -27], [4, -27], [-26, 0], [26, 0], [-7, 8], [7, 8]];
@@ -530,10 +535,12 @@ export class GameScene {
       const p = mesh(new THREE.BoxGeometry(0.14, 0.9, 0.14), '#8a5530');
       p.position.set(x, 0.45, -28);
       this.scene.add(p);
+      (this.fenceMeshes ??= []).push(p);
     }
     const rail = mesh(new THREE.BoxGeometry(60, 0.1, 0.1), '#8a5530');
     rail.position.set(0, 0.7, -28);
     this.scene.add(rail);
+    this.fenceMeshes.push(rail);
     // 먼 언덕·구름
     for (const [x, z, r, c] of [[-40, -60, 22, '#86b27a'], [0, -70, 28, '#79a86f'], [42, -62, 24, '#86b27a'], [-70, -40, 20, '#8cb880'], [70, -40, 20, '#8cb880']]) {
       const h = mesh(new THREE.ConeGeometry(r, r * 0.55, 7), c, { cast: false });
@@ -974,6 +981,93 @@ export class GameScene {
       if (d.kind === 'table') m.position.y += 0.15;
       g.add(m);
     }
+    this.placeBackgroundProps();
+  }
+
+  /** 나무·가로등·화단·울타리·바위 (배경) */
+  placeBackgroundProps() {
+    const P = this.props ?? {};
+    const rnd = mulberry(21);
+    if (P.tree) {
+      for (const t of this.trees ?? []) {
+        const m = this.makeProp('tree', { fit: 'y', size: 3.7 * t.s, rotY: rnd() * Math.PI * 2 });
+        if (!m) continue;
+        for (const ch of t.g.children) ch.visible = false;
+        m.traverse((o) => o.material && (o.material.transparent = true));
+        t.g.add(m);
+      }
+    }
+    if (P.lamp) {
+      for (const l of this.lampPosts ?? []) {
+        const m = this.makeProp('lamp', { fit: 'y', size: 2.5 });
+        if (!m) continue;
+        m.position.set(l.x, 0, l.z);
+        this.scene.add(m);
+        l.pole.visible = l.cap.visible = false;
+        // 밤 불빛: 코드 등(발광)을 랜턴 안쪽으로 옮겨 작게
+        l.head.scale.setScalar(0.55);
+        l.head.position.y = 2.5 * 0.86;
+      }
+    }
+    if (P.planter) {
+      for (const sp of this.planterSpots ?? []) {
+        const m = this.makeProp('planter', { fit: 'x', size: 1.9 });
+        if (!m) continue;
+        sp.g.traverse((o) => o.userData.planter && (o.visible = false));
+        m.position.set(sp.x, 0, sp.z);
+        sp.g.add(m);
+      }
+    }
+    if (P.fence && this.fenceMeshes) {
+      const tf = [];
+      for (let x = -30; x < 30; x += 3) {
+        if (Math.abs(x + 1.5) < 2) continue; // 길 자리 비움
+        tf.push({ x: x + 1.5, z: -28, rot: 0, s: 1 });
+      }
+      const inst = this.instancedProp('fence', tf, { fit: 'x', size: 3.05 });
+      if (inst) {
+        for (const m of this.fenceMeshes) m.visible = false;
+        this.scene.add(inst);
+      }
+    }
+    if (P.rocks && this.rockMeshes) {
+      const tf = this.rockMeshes.filter((_, i) => i % 2 === 0).map((r) => ({ x: r.position.x, z: r.position.z, rot: rnd() * Math.PI * 2, s: 0.75 + rnd() * 0.6 }));
+      const inst = this.instancedProp('rocks', tf, { fit: 'x', size: 1.3 });
+      if (inst) {
+        for (const m of this.rockMeshes) m.visible = false;
+        this.scene.add(inst);
+      }
+    }
+  }
+
+  /** 같은 소품을 여러 개 한 번에 그린다 (InstancedMesh). 소품의 메쉬마다 하나씩 */
+  instancedProp(id, transforms, { fit = 'x', size = 1 } = {}) {
+    const p = this.props?.[id];
+    if (!p || !transforms.length) return null;
+    const src = p.gltf.scene;
+    src.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(src);
+    const dims = box.getSize(new THREE.Vector3());
+    const k = size / Math.max(1e-4, fit === 'x' ? dims.x : fit === 'z' ? dims.z : dims.y);
+    const c = box.getCenter(new THREE.Vector3());
+    const base = new THREE.Matrix4().makeScale(k, k, k).multiply(new THREE.Matrix4().makeTranslation(-c.x, -box.min.y, -c.z));
+    const group = new THREE.Group();
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    src.traverse((o) => {
+      if (!o.isMesh) return;
+      const local = base.clone().multiply(o.matrixWorld);
+      const im = new THREE.InstancedMesh(o.geometry, o.material, transforms.length);
+      transforms.forEach((t, i) => {
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot ?? 0);
+        m4.compose(new THREE.Vector3(t.x, 0, t.z), q, new THREE.Vector3(t.s ?? 1, t.s ?? 1, t.s ?? 1)).multiply(local);
+        im.setMatrixAt(i, m4);
+      });
+      im.castShadow = true;
+      im.receiveShadow = true;
+      group.add(im);
+    });
+    return group;
   }
 
   // ───────── GLB 캐릭터 (있으면 코드 캐릭터 대신 사용) ─────────
