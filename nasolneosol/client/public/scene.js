@@ -85,6 +85,7 @@ export class GameScene {
     this.buildWorld();
     this.bindInput();
     this.loadModels();
+    this.loadProps();
     this.resize();
     addEventListener('resize', () => this.resize());
     this.renderer.setAnimationLoop(() => this.frame());
@@ -280,6 +281,7 @@ export class GameScene {
         blanket.position.set(bx, 0.62, -D / 2 + 1.6);
         const pillow = mesh(new THREE.BoxGeometry(0.8, 0.14, 0.35), '#ffffff');
         pillow.position.set(bx, 0.66, -D / 2 + 0.5);
+        for (const m of [frame, mat, blanket, pillow]) m.userData.furn = 'bed';
         g.add(frame, mat, blanket, pillow);
         colliders.push({ minX: x + bx - 0.65, maxX: x + bx + 0.65, minZ: z - D / 2, maxZ: z - D / 2 + 2.3 });
       }
@@ -298,6 +300,8 @@ export class GameScene {
         table.position.set(sx * (W / 2 - 2.0), 0.55, 0);
         const leg = mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.5, 6), '#7d4c27');
         leg.position.set(sx * (W / 2 - 2.0), 0.28, 0);
+        base.userData.furn = back.userData.furn = 'sofa';
+        table.userData.furn = leg.userData.furn = 'table';
         g.add(base, back, table, leg);
         colliders.push({ minX: x + sx * (W / 2 - 0.9) - 0.5, maxX: x + sx * (W / 2 - 0.9) + 0.5, minZ: z - 1.3, maxZ: z + 1.3 });
         const pot = mesh(new THREE.CylinderGeometry(0.22, 0.18, 0.35, 8), '#c97b63');
@@ -333,7 +337,7 @@ export class GameScene {
     this.scene.add(g, cover);
     cover.traverse((o) => o.userData.isLamp && (this.lampMats ??= new Set()).add(o.material));
     (this.colliders ??= []).push(...colliders);
-    (this.houses ??= []).push({ cover, name: sign, x, z, minX: x - W / 2, maxX: x + W / 2, minZ: z - D / 2, maxZ: z + D / 2, fade: 1 });
+    (this.houses ??= []).push({ cover, g, sign: signM, kind, W, D, H, name: sign, x, z, minX: x - W / 2, maxX: x + W / 2, minZ: z - D / 2, maxZ: z + D / 2, fade: 1 });
   }
 
   buildPlaza() {
@@ -462,6 +466,7 @@ export class GameScene {
       }
     } else {
       const deck = mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.15, 8), '#c79b6a', { receive: true });
+      deck.userData.keep = true;
       deck.position.y = 0.07;
       const top = mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.08, 10), '#fff8ec');
       top.position.y = 0.78;
@@ -470,6 +475,7 @@ export class GameScene {
       g.add(deck, top, leg);
       for (let k = 0; k < 6; k++) {
         const pot = mesh(new THREE.IcosahedronGeometry(0.28, 0), k % 2 ? '#f2a585' : '#6faa4d');
+        pot.userData.keep = true;
         pot.position.set(Math.cos(k * 1.05) * 2.2, 0.3, Math.sin(k * 1.05) * 2.2 - 0.4);
         if (Math.sin(k * 1.05) > 0.3) continue; // 카메라 쪽은 비워 둔다
         g.add(pot);
@@ -478,6 +484,7 @@ export class GameScene {
     g.position.set(d.x, 0, d.z - (d.kind === 'bench' || d.kind === 'swing' ? 0.6 : 0));
     g.rotation.y = d.rot;
     this.scene.add(g);
+    (this.dateSpotGroups ??= []).push({ g, d });
   }
 
   buildNature() {
@@ -845,6 +852,127 @@ export class GameScene {
         head.add(visor);
         break;
       }
+    }
+  }
+
+  // ───────── GLB 소품·건물 (있으면 코드 도형 대신 사용) ─────────
+  async loadProps() {
+    let list = {};
+    try {
+      list = await fetch('/models/props.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {}));
+    } catch { /* 없음 */ }
+    const loader = new GLTFLoader();
+    this.props = {};
+    await Promise.all(Object.entries(list).map(async ([id, spec]) => {
+      if (id.startsWith('_')) return;
+      try {
+        const gltf = await loader.loadAsync(spec.url);
+        if (spec.mipmaps === false) disableMipmaps(gltf);
+        this.props[id] = { gltf, spec };
+      } catch (e) {
+        console.warn('prop load failed', id, e);
+      }
+    }));
+    this.placeProps();
+  }
+
+  /** 소품 하나를 정규화해서 만든다: 회전(spec.rot) → 지정 축 크기에 맞춤 → 바닥(y=0)·중앙 정렬 */
+  makeProp(id, { fit = 'x', size = 1, rotY = 0, opaqueShadow = true } = {}) {
+    const p = this.props?.[id];
+    if (!p) return null;
+    const inner = p.gltf.scene.clone(true);
+    inner.rotation.y = THREE.MathUtils.degToRad(p.spec.rot ?? 0);
+    const holder = new THREE.Group();
+    holder.add(inner);
+    holder.updateMatrixWorld(true);
+    let box = new THREE.Box3().setFromObject(holder);
+    const dims = box.getSize(new THREE.Vector3());
+    const k = size / Math.max(1e-4, fit === 'x' ? dims.x : fit === 'z' ? dims.z : dims.y);
+    holder.scale.setScalar(k);
+    holder.updateMatrixWorld(true);
+    box = new THREE.Box3().setFromObject(holder);
+    const c = box.getCenter(new THREE.Vector3());
+    const out = new THREE.Group();
+    holder.position.set(-c.x, -box.min.y, -c.z);
+    out.add(holder);
+    out.rotation.y = rotY;
+    out.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = opaqueShadow;
+        o.receiveShadow = true;
+        o.material = o.material.clone();
+      }
+    });
+    return out;
+  }
+
+  placeProps() {
+    const P = this.props ?? {};
+    // 건물 외관
+    const houseId = { '남자 숙소': 'house_m', '여자 숙소': 'house_f', '공용 라운지': 'lounge' };
+    for (const h of this.houses ?? []) {
+      const id = houseId[h.name];
+      if (!P[id]) continue;
+      const m = this.makeProp(id, { fit: 'x', size: h.W + 0.5 });
+      if (!m) continue;
+      for (const ch of h.cover.children) if (ch !== h.sign) ch.visible = false;
+      m.traverse((o) => o.material && (o.material.transparent = true));
+      h.cover.add(m);
+      h.sign.position.y = Math.max(h.sign.position.y, new THREE.Box3().setFromObject(m).max.y * 0 + h.H + 0.55);
+      // 가구 교체
+      const furnHide = (tag) => h.g.traverse((o) => o.userData.furn === tag && (o.visible = false));
+      const add = (mm, x, z) => {
+        if (!mm) return;
+        mm.position.x += x;
+        mm.position.z += z;
+        mm.position.y += 0.08;
+        h.g.add(mm);
+      };
+      if (h.kind === 'dorm') {
+        if (P.bed) {
+          furnHide('bed');
+          for (let i = 0; i < 3; i++) add(this.makeProp('bed', { fit: 'z', size: 2.1 }), -h.W / 2 + 1.3 + i * ((h.W - 2.6) / 2), -h.D / 2 + 1.25);
+        }
+        if (P.nightstand) {
+          for (const nx of [-(h.W - 2.6) / 4, (h.W - 2.6) / 4]) {
+            add(this.makeProp('nightstand', { fit: 'y', size: 1.0 }), nx, -h.D / 2 + 0.45);
+            this.colliders.push({ minX: h.x + nx - 0.3, maxX: h.x + nx + 0.3, minZ: h.z - h.D / 2, maxZ: h.z - h.D / 2 + 0.8 });
+          }
+        }
+        if (P.wardrobe) {
+          const wx = -h.W / 2 + 0.55;
+          const wz = h.D / 2 - 1.1;
+          add(this.makeProp('wardrobe', { fit: 'y', size: 2.0, rotY: Math.PI / 2 }), wx, wz);
+          this.colliders.push({ minX: h.x + wx - 0.45, maxX: h.x + wx + 0.45, minZ: h.z + wz - 0.6, maxZ: h.z + wz + 0.6 });
+        }
+        if (P.lowtable) {
+          add(this.makeProp('lowtable', { fit: 'x', size: 1.8 }), h.W / 2 - 1.6, h.D / 2 - 1.3);
+          this.colliders.push({ minX: h.x + h.W / 2 - 2.3, maxX: h.x + h.W / 2 - 0.9, minZ: h.z + h.D / 2 - 1.9, maxZ: h.z + h.D / 2 - 0.7 });
+        }
+      } else {
+        if (P.sofa) {
+          furnHide('sofa');
+          add(this.makeProp('sofa', { fit: 'x', size: 2.6, rotY: Math.PI / 2 }), -(h.W / 2 - 0.75), 0);
+          add(this.makeProp('sofa', { fit: 'x', size: 2.6, rotY: -Math.PI / 2 }), h.W / 2 - 0.75, 0);
+        }
+        if (P.lowtable) {
+          furnHide('table');
+          add(this.makeProp('lowtable', { fit: 'x', size: 1.4 }), -(h.W / 2 - 2.1), 0);
+          add(this.makeProp('lowtable', { fit: 'x', size: 1.4 }), h.W / 2 - 2.1, 0);
+        }
+      }
+    }
+    // 데이트 장소
+    for (const { g, d } of this.dateSpotGroups ?? []) {
+      let m = null;
+      if (d.kind === 'bench' && P.bench) m = this.makeProp('bench', { fit: 'x', size: 2.4 });
+      if (d.kind === 'swing' && P.swing) m = this.makeProp('swing', { fit: 'x', size: 3.4 });
+      if (d.kind === 'bridge' && P.bridge) m = this.makeProp('bridge', { fit: 'z', size: 5.2 });
+      if (d.kind === 'table' && P.cafe) m = this.makeProp('cafe', { fit: 'x', size: 2.4 });
+      if (!m) continue;
+      for (const ch of g.children) if (!ch.userData.keep) ch.visible = false;
+      if (d.kind === 'table') m.position.y += 0.15;
+      g.add(m);
     }
   }
 

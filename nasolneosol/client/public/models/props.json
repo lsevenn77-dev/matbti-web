@@ -1,0 +1,15 @@
+{
+  "_note": "건물·가구·데이트 소품. Higgsfield(GPT Image 2.6 → Meshy 7) 생성 → UV 섬 재배치 → 정리. rot: 모델 회전(도). 정식 서비스 전 R2 로 이전 예정",
+  "house_m": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/b67f2a3f-ad7f-4474-86d3-f47262c06f72.glb" },
+  "house_f": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/c2ba4044-4331-4c44-bdb4-e6f9b1c5d876.glb" },
+  "lounge": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/7fbf2a1d-f3f8-499c-9c1d-db33fef5dd0c.glb" },
+  "bed": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/e65c3dec-18ca-421e-a754-fd54cd296c2a.glb" },
+  "nightstand": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/3d282724-3968-4538-b962-e986cb0f71b3.glb" },
+  "wardrobe": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/45e97714-a596-407d-858d-02e39acd5e6f.glb" },
+  "lowtable": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/527e290f-c91a-4f32-8c07-629d0e93835f.glb" },
+  "sofa": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/bd36314a-3b72-45b1-ac02-fe132c62f5de.glb" },
+  "bench": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/1bc9ea7c-4d0e-4eb6-b90d-48db5550d8e9.glb" },
+  "swing": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/097c3b3a-6b26-4564-bcc0-f33ad0ed8e8a.glb" },
+  "bridge": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/b724053c-a91d-4839-8361-9a738cde07d7.glb", "rot": 90 },
+  "cafe": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/fa8229c0-12f2-423d-9666-e913ae44303e.glb" }
+}
