@@ -1318,7 +1318,7 @@ export class GameScene {
     for (const h of this.houses ?? []) {
       const inside = me && me.x > h.minX - 0.3 && me.x < h.maxX + 0.3 && me.z > h.minZ - 0.3 && me.z < h.maxZ + 0.3;
       const behind = me && me.x > h.minX - 1 && me.x < h.maxX + 1 && me.z < h.minZ && me.z > h.minZ - 9;
-      const goal = inside ? 0.12 : behind ? 0.25 : 1;
+      const goal = inside ? 0.07 : behind ? 0.2 : 1;
       if (Math.abs(h.fade - goal) > 0.01) {
         h.fade += (goal - h.fade) * Math.min(1, dt * 6);
         h.cover.traverse((o) => {
@@ -1345,9 +1345,10 @@ export class GameScene {
         const px = cx + dx * t - tr.x;
         const pz = cz + dz * t - tr.z;
         const blocks = t > 0 && t < 1.08 && px * px + pz * pz < (tr.r + 1.2) ** 2;
-        const goal = blocks ? 0.18 : 1;
+        const goal = blocks ? 0 : 1; // 흐릿한 잔상 대신 완전히 숨김
         if (Math.abs(tr.fade - goal) > 0.01) {
           tr.fade += (goal - tr.fade) * Math.min(1, dt * 6);
+          tr.g.visible = tr.fade > 0.03;
           tr.g.traverse((o) => {
             if (o.material) {
               o.material.opacity = tr.fade;
@@ -1466,8 +1467,8 @@ const TOD_KEYS = [
   { t: 0.2, top: '#86bdf0', bottom: '#fde3c8', sun: '#ffdcae', sunI: 2.0, hemiSky: '#fff0e0', hemiGround: '#86a06a', hemi: 1.4, lamp: 0.2, window: 0, cloud: 1, sunAngle: 0.5 },
   { t: 0.45, top: '#5aa7ec', bottom: '#d9eefc', sun: '#fff3dd', sunI: 2.4, hemiSky: '#fff6e8', hemiGround: '#7f9a62', hemi: 1.6, lamp: 0.2, window: 0, cloud: 1, sunAngle: 1.45 },
   { t: 0.64, top: '#6f86cc', bottom: '#f6b17c', sun: '#ffb377', sunI: 1.8, hemiSky: '#ffd9bd', hemiGround: '#7a8a5a', hemi: 1.15, lamp: 0.9, window: 0.3, cloud: 0.9, sunAngle: 2.45 },
-  { t: 0.8, top: '#2f3d7a', bottom: '#b9789a', sun: '#d79ad0', sunI: 0.8, hemiSky: '#a99ad8', hemiGround: '#4f5a55', hemi: 0.75, lamp: 2.2, window: 1.0, cloud: 0.5, sunAngle: 2.9 },
-  { t: 0.95, top: '#0e1636', bottom: '#2b3868', sun: '#a9bcff', sunI: 0.55, hemiSky: '#8a9cff', hemiGround: '#2f3a44', hemi: 0.55, lamp: 2.8, window: 1.4, cloud: 0.25, sunAngle: 1.9 },
+  { t: 0.8, top: '#3a4a8a', bottom: '#c4849f', sun: '#e0a6d6', sunI: 1.05, hemiSky: '#b4a6e0', hemiGround: '#5a665c', hemi: 1.0, lamp: 2.2, window: 1.0, cloud: 0.5, sunAngle: 2.9 },
+  { t: 0.95, top: '#121c42', bottom: '#33427a', sun: '#b3c4ff', sunI: 0.7, hemiSky: '#97a8ff', hemiGround: '#38434e', hemi: 0.75, lamp: 2.8, window: 1.4, cloud: 0.25, sunAngle: 1.9 },
 ].map((k) => ({ ...k, top: new THREE.Color(k.top), bottom: new THREE.Color(k.bottom), sun: new THREE.Color(k.sun), hemiSky: new THREE.Color(k.hemiSky), hemiGround: new THREE.Color(k.hemiGround) }));
 const _tod = { top: new THREE.Color(), bottom: new THREE.Color(), sun: new THREE.Color(), hemiSky: new THREE.Color(), hemiGround: new THREE.Color() };
 function sampleTod(t) {
