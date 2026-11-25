@@ -28,6 +28,54 @@ elif [ -z "$dnsip" ] || { [ -n "$myip" ] && [ "$dnsip" != "$myip" ]; }; then
   exit 1
 fi
 
+if [ "$CF" = 1 ] && systemctl is-active --quiet nginx 2>/dev/null && [ "${STOP_WEB:-0}" != 1 ]; then
+  # 이미 nginx 가 돌고 있으면 끄지 않고 이 도메인용 설정만 추가한다 (다른 사이트 보호)
+  say "기존 nginx 에 $DOMAIN 설정 추가 (다른 사이트는 그대로)"
+  mkdir -p /etc/nginx/nasol-ssl
+  if [ ! -f /etc/nginx/nasol-ssl/cert.pem ]; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 -subj "/CN=$DOMAIN" \
+      -keyout /etc/nginx/nasol-ssl/key.pem -out /etc/nginx/nasol-ssl/cert.pem >/dev/null 2>&1
+  fi
+  cat > /etc/nginx/conf.d/nasolneosol.conf <<EOF
+# 나솔너솔 (Cloudflare 프록시 뒤). 자동 생성: deploy/https.sh
+map \$http_upgrade \$nasol_conn { default upgrade; '' close; }
+server {
+    listen 80;
+    listen 443 ssl;
+    server_name $DOMAIN;
+    ssl_certificate     /etc/nginx/nasol-ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/nasol-ssl/key.pem;
+    client_max_body_size 10m;
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$nasol_conn;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+    }
+}
+EOF
+  if nginx -t 2>&1 | tail -2; nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx
+  else
+    echo "  nginx 설정 검사 실패 → 추가한 설정을 되돌릴게"; rm -f /etc/nginx/conf.d/nasolneosol.conf; exit 1
+  fi
+  if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null; fi
+  sleep 2
+  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$DOMAIN/api/info" || true)
+  if [ "$code" = 200 ]; then
+    say "완료! https://$DOMAIN"
+  else
+    say "https://$DOMAIN 응답 코드: $code"
+    curl -s -o /dev/null -w "  서버 직접(80) 응답: %{http_code}\n" -H "Host: $DOMAIN" http://127.0.0.1/api/info || true
+    echo "  Cloudflare SSL/TLS 모드가 'Full (strict)' 면 'Full' 로 바꿔 줘. 카페24 방화벽에서 80, 443 허용도 확인."
+  fi
+  exit 0
+fi
+
 say "80/443 포트를 쓰는 다른 웹서버 확인"
 for svc in httpd apache2 nginx; do
   if systemctl is-active --quiet "$svc" 2>/dev/null; then
