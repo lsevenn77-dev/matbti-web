@@ -15,8 +15,8 @@ export const ZONES = {
   dorm_female: { x: 14, z: -1.2, r: 1.8, label: '여자 숙소' },
 };
 const DATE_SPOTS = [
-  { x: -7, z: -11, label: '개울 벤치', kind: 'bench', rot: 0.35 },
-  { x: 7, z: -11, label: '개울 벤치', kind: 'bench', rot: -0.35 },
+  { x: -9.6, z: -11.8, label: '개울 벤치', kind: 'bench', rot: 0.35 },
+  { x: 9.6, z: -11.8, label: '개울 벤치', kind: 'bench', rot: -0.35 },
   { x: 0, z: -15.6, label: '나무 다리', kind: 'bridge', rot: 0 },
   { x: -16, z: -17, label: '테라스', kind: 'table', rot: 0 },
   { x: 16, z: -17, label: '그네', kind: 'swing', rot: 0 },
@@ -130,7 +130,7 @@ export class GameScene {
     this.buildPath();
     this.buildHouse(-14, -2.2, '#3f5f97', '남자 숙소', { kind: 'dorm', accent: '#9fb7da' });
     this.buildHouse(14, -2.2, '#d9665a', '여자 숙소', { kind: 'dorm', accent: '#eab0bd' });
-    this.buildHouse(0, -8.6, '#4f8a5b', '공용 라운지', { kind: 'lounge', W: 8, D: 4.6, backDoor: true });
+    this.buildHouse(0, -9.2, '#4f8a5b', '공용 라운지', { kind: 'lounge', W: 12, D: 6.6, backDoor: true });
     this.buildPlaza();
     this.buildStream();
     DATE_SPOTS.forEach((d) => this.buildDateSpot(d));
@@ -963,6 +963,12 @@ export class GameScene {
           furnHide('sofa');
           add(this.makeProp('sofa', { fit: 'x', size: 2.6, rotY: Math.PI / 2 }), -(h.W / 2 - 0.75), 0);
           add(this.makeProp('sofa', { fit: 'x', size: 2.6, rotY: -Math.PI / 2 }), h.W / 2 - 0.75, 0);
+          // 넓어진 라운지: 뒷벽 쪽 소파 2개 (뒷문 양옆, 앞을 보게)
+          for (const sx of [-1, 1]) {
+            add(this.makeProp('sofa', { fit: 'x', size: 2.6, rotY: 0 }), sx * 3.2, -(h.D / 2 - 0.75));
+            this.colliders.push({ minX: h.x + sx * 3.2 - 1.3, maxX: h.x + sx * 3.2 + 1.3, minZ: h.z - h.D / 2, maxZ: h.z - h.D / 2 + 1.2 });
+          }
+          if (P.lowtable) add(this.makeProp('lowtable', { fit: 'x', size: 1.6 }), 0, 0.2);
         }
         if (P.lowtable) {
           furnHide('table');
@@ -1368,6 +1374,9 @@ export class GameScene {
       } else {
         for (const sx of [-1, 1]) for (const sz of [-0.6, 0.6]) {
           seats.push({ kind: 'sit', label: '앉기', x: h.x + sx * (h.W / 2 - 1.0), z: h.z + sz, face: sx < 0 ? Math.PI / 2 : -Math.PI / 2, y: 0.05 });
+        }
+        if (h.W >= 11) for (const sx of [-1, 1]) for (const ox of [-0.6, 0.6]) {
+          seats.push({ kind: 'sit', label: '앉기', x: h.x + sx * 3.2 + ox, z: h.z - h.D / 2 + 1.0, face: 0, y: 0.05 });
         }
       }
     }

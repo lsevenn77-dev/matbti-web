@@ -323,12 +323,40 @@ setInterval(() => {
   const s = Math.ceil(left / 1000);
   $('#timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   if (st.view.phase === 'minigame') renderMinigameTick();
+  announceSelfIntro(e);
   st.scene?.drawMinimap($('#minimap'));
   if (canRoam()) {
     updateLoc();
     updatePoseButton();
   }
 }, 200);
+
+// 자기소개 바로 전 단계: 시작할 때 'N분 후', 1분 남으면 '곧' 안내
+const announced = new Set();
+function announceSelfIntro(e) {
+  const v = st.view;
+  const i = v.phases?.indexOf(v.phase) ?? -1;
+  if (i < 0 || v.phases[i + 1] !== 'selfIntro' || e == null) return;
+  const left = e - serverNow();
+  const key = `${v.roomId}:${v.phaseStartedAt}`;
+  if (left > 70_000 && !announced.has(key + ':n')) {
+    announced.add(key + ':n');
+    notice(`📢 약 ${Math.round(left / 60000)}분 후 자기소개가 있을 예정입니다.`);
+  } else if (left <= 60_000 && left > 0 && !announced.has(key + ':soon')) {
+    announced.add(key + ':n');
+    announced.add(key + ':soon');
+    notice('📢 곧 자기소개가 있을 예정입니다. 자기소개 마당으로 모여 주세요.');
+  }
+}
+function notice(text) {
+  toast(text);
+  const log = $('#chat-log');
+  const d = document.createElement('div');
+  d.className = 'm sys notice';
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
 
 function updateLoc() {
   const v = st.view;

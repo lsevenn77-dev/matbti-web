@@ -201,3 +201,4 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
 @media (orientation: landscape) and (max-height: 560px) {
   #screen-game:has(#joystick:not([hidden])) .panel { bottom: 132px; max-height: calc(100% - 200px); }
 }
+.chat-log .m.notice { color: #b4602f; font-weight: 700; }
