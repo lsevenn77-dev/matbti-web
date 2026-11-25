@@ -146,7 +146,7 @@ export function createServer(opts = {}) {
   // ── HTTP ────────────────────────────────────────────
   const STATIC = path.join(ROOT, 'client', 'public');
   const THREE = path.join(ROOT, 'node_modules', 'three', 'build');
-  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 
   function serveFile(res, file, cache) {
     fs.readFile(file, (err, buf) => {
@@ -251,6 +251,13 @@ export function createServer(opts = {}) {
         if (!ph) return json(res, 404, { error: 'not found' });
         res.writeHead(200, { 'Content-Type': ph.mime, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
         return res.end(ph.buf);
+      }
+      if (p.startsWith('/vendor/three-addons/')) {
+        // three/examples/jsm (GLTFLoader 등). 경로 밖으로 나가지 못하게 정규화
+        const base = path.join(ROOT, 'node_modules', 'three', 'examples', 'jsm');
+        const f = path.normalize(path.join(base, p.slice('/vendor/three-addons/'.length)));
+        if (!f.startsWith(base + path.sep) || !f.endsWith('.js')) return json(res, 403, { error: 'forbidden' });
+        return serveFile(res, f, 'public, max-age=31536000, immutable');
       }
       if (p.startsWith('/vendor/three/')) {
         const f = path.join(THREE, path.basename(p));

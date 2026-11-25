@@ -3,6 +3,8 @@
 // - 서버가 정한 구역(zone)에 따라 자리 배치, 자유 구경에서는 위치 동기화.
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ───────── 월드 배치 (화면 위쪽이 -z) ─────────
 export const WORLD = { minX: -24, maxX: 24, minZ: -26, maxZ: 10 };
@@ -78,8 +80,10 @@ export class GameScene {
     this.clock = new THREE.Clock();
     this.speaking = new Set();
     this.localPos = null; // 자유 구경 중 내 예측 위치
+    this.models = {}; // characterId → gltf (최종 3D 자산). 없으면 코드 캐릭터 사용
     this.buildWorld();
     this.bindInput();
+    this.loadModels();
     this.resize();
     addEventListener('resize', () => this.resize());
     this.renderer.setAnimationLoop(() => this.frame());
@@ -749,6 +753,64 @@ export class GameScene {
     }
   }
 
+  // ───────── GLB 캐릭터 (있으면 코드 캐릭터 대신 사용) ─────────
+  async loadModels() {
+    let manifest = {};
+    try {
+      manifest = await fetch('/models/manifest.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {}));
+    } catch { /* 모델 없음 */ }
+    const loader = new GLTFLoader();
+    await Promise.all(Object.entries(manifest).map(async ([cid, url]) => {
+      try {
+        this.models[cid] = await loader.loadAsync(url);
+        for (const c of this.chars.values()) if (c.characterId === cid) this.attachModel(c);
+      } catch (e) {
+        console.warn('model load failed', cid, e);
+      }
+    }));
+  }
+
+  attachModel(c) {
+    const gltf = this.models[c.characterId];
+    if (!gltf || c.model) return;
+    const model = SkeletonUtils.clone(gltf.scene);
+    // 높이를 코드 캐릭터와 비슷하게(약 2.3) 맞추고 발을 바닥에
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const k = 2.3 / Math.max(size.y, 0.001);
+    model.scale.setScalar(k);
+    const box2 = new THREE.Box3().setFromObject(model);
+    const center = box2.getCenter(new THREE.Vector3());
+    model.position.set(-center.x, -box2.min.y, -center.z);
+    model.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = true;
+        o.frustumCulled = false;
+      }
+      o.userData.pid = c.pid;
+    });
+    const wrap = new THREE.Group();
+    wrap.add(model);
+    c.group.add(wrap);
+    c.body.visible = false;
+    c.model = wrap;
+    // 뼈대가 있으면 다리·팔 뼈를 찾아 걷기 흔들기에 사용
+    const bones = [];
+    model.traverse((o) => o.isBone && bones.push(o));
+    const find = (re, not) => bones.find((b) => re.test(b.name) && !(not && not.test(b.name)));
+    const L = (side) => new RegExp(`(^|[^a-z])(${side}|${side[0]}[_.]?)`, 'i');
+    const pick = (side, re, not) => bones.find((b) => L(side).test(b.name) && re.test(b.name) && !(not && not.test(b.name))) ?? find(new RegExp(`${side}.*${re.source}`, 'i'), not);
+    const legs = ['left', 'right'].map((sd) => pick(sd, /(up.?leg|thigh|upperleg)/i)).filter(Boolean);
+    const arms = ['left', 'right'].map((sd) => pick(sd, /(arm|upperarm)/i, /(fore|lower|hand)/i)).filter(Boolean);
+    c.boneLegs = legs.map((b) => ({ b, rest: b.quaternion.clone() }));
+    c.boneArms = arms.map((b) => ({ b, rest: b.quaternion.clone() }));
+    if (gltf.animations?.length) {
+      c.mixer = new THREE.AnimationMixer(model);
+      c.clips = gltf.animations;
+    }
+    console.info('model attached', c.characterId, 'bones', bones.length, 'legs', legs.map((b) => b.name), 'arms', arms.map((b) => b.name), 'clips', gltf.animations.map((a) => a.name));
+  }
+
   // ───────── 서버 상태 반영 ─────────
   update(view) {
     this.meId = view.me.id;
@@ -763,9 +825,12 @@ export class GameScene {
       let c = this.chars.get(p.id);
       if (!c) {
         c = this.makeCharacter(p);
+        c.characterId = p.characterId;
+        c.pid = p.id;
         this.chars.set(p.id, c);
         this.scene.add(c.group);
         c.fresh = true;
+        this.attachModel(c);
       }
       const zone = view.zones[p.id];
       c.sit = false;
@@ -895,6 +960,20 @@ export class GameScene {
         const goal = moving ? Math.sin(w + (1 - i) * Math.PI) * 0.7 : seated ? -0.5 : Math.sin(t * 1.6 + c.phase) * 0.04;
         arm.rotation.x += (goal - arm.rotation.x) * Math.min(1, dt * 12);
       });
+      if (c.model) {
+        const q = new THREE.Quaternion();
+        const X = new THREE.Vector3(1, 0, 0);
+        c.boneLegs?.forEach(({ b, rest }, i) => {
+          const a = seated ? 1.3 : moving ? Math.sin(w + i * Math.PI) * 0.55 : 0;
+          b.quaternion.copy(rest).multiply(q.setFromAxisAngle(X, a));
+        });
+        c.boneArms?.forEach(({ b, rest }, i) => {
+          const a = moving ? Math.sin(w + (1 - i) * Math.PI) * 0.5 : 0;
+          b.quaternion.copy(rest).multiply(q.setFromAxisAngle(X, a));
+        });
+        c.model.position.y = seated ? -0.15 : moving ? Math.abs(Math.sin(w)) * 0.07 : Math.sin(t * 2 + c.phase) * 0.012;
+        c.mixer?.update(dt);
+      }
       const sp = this.speaking.has(id);
       c.body.position.y = seated ? -0.12 : moving ? Math.abs(Math.sin(w)) * 0.07 : Math.sin(t * 2 + c.phase) * 0.012 + (sp ? Math.abs(Math.sin(t * 7)) * 0.03 : 0);
       if (sp && !moving) c.arms[1].rotation.z = -0.18 - Math.abs(Math.sin(t * 2.4)) * 0.6; // 말할 때 손짓
