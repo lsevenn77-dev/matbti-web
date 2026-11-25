@@ -621,14 +621,17 @@ export class GameScene {
     voiceRing.rotation.x = -Math.PI / 2;
     voiceRing.position.y = 0.07;
     root.add(voiceRing);
-    const label = labelSprite(p.alias);
-    label.position.y = 2.65;
-    root.add(label);
+    // 이름은 옷(가슴·등)에 명찰로. 머리 위는 채팅 말풍선 자리
+    const badges = makeBadges(p.alias, p.gender);
+    badges.front.position.set(0, 0.98, 0.36);
+    badges.back.position.set(0, 0.98, -0.36);
+    body.add(badges.front, badges.back);
+    const label = { material: { opacity: 1 } }; // (호환용)
 
     root.traverse((o) => (o.userData.pid = p.id));
     root.scale.setScalar(1.05);
     void female;
-    return { group: root, body, legs, arms, head, target: new THREE.Vector3(), face: 0, voiceRing, ring, label, sit: false, phase: Math.random() * 6 };
+    return { group: root, body, legs, arms, head, target: new THREE.Vector3(), face: 0, voiceRing, ring, label, badges, alias: p.alias, gender: p.gender, sit: false, phase: Math.random() * 6 };
   }
 
   addHair(head, L) {
@@ -812,6 +815,15 @@ export class GameScene {
     c.group.add(wrap);
     c.body.visible = false;
     c.model = wrap;
+    {
+      const h = box2.max.y - box2.min.y;
+      const nb = makeBadges(c.alias, c.gender);
+      const fz = box2.max.z - center.z;
+      const bz = box2.min.z - center.z;
+      nb.front.position.set(0, h * 0.42, fz * 0.62 + 0.02);
+      nb.back.position.set(0, h * 0.42, bz * 0.62 - 0.02);
+      wrap.add(nb.front, nb.back);
+    }
     // 뼈대가 있으면 다리·팔 뼈를 찾아 걷기 흔들기에 사용
     const bones = [];
     model.traverse((o) => o.isBone && bones.push(o));
@@ -871,9 +883,14 @@ export class GameScene {
         c.lookAt = new THREE.Vector3(0, 0, 30); // 발표자는 카메라(앞)를 본다
       } else {
         const members = byZone.get(zone);
-        pos = this.circle(ZONES[zone] ?? ZONES.lounge, members.indexOf(p.id), members.length);
         const z = ZONES[zone] ?? ZONES.lounge;
-        if (members.length > 1) c.lookAt = new THREE.Vector3(z.x, 0, z.z);
+        if (members.length > 1) {
+          // 카메라(앞, +z) 쪽으로 열린 반원에 서서, 서로와 카메라를 함께 보게 한다
+          pos = this.arc(z, members.indexOf(p.id), members.length);
+          c.lookAt = new THREE.Vector3(z.x, 0, z.z + 2.4);
+        } else {
+          pos = this.circle(z, 0, 1);
+        }
       }
       if (zone !== 'free' && p.id === this.meId) this.localPos = null;
       c.target.copy(pos);
@@ -894,6 +911,22 @@ export class GameScene {
       this.camTarget.set(f.x, 0, f.z);
     }
     this.closeUp = view.phase.startsWith('date') && !!view.myDate;
+  }
+
+  /** 채팅 말풍선: 보낸 사람 머리 위에 몇 초간 */
+  showBubble(pid, text) {
+    const c = this.chars.get(pid);
+    if (!c) return;
+    if (c.bubble) {
+      c.group.remove(c.bubble);
+      c.bubble.material.map.dispose();
+      c.bubble.material.dispose();
+    }
+    const sp = bubbleSprite(text);
+    sp.position.y = 2.5;
+    c.group.add(sp);
+    c.bubble = sp;
+    c.bubbleUntil = performance.now() + Math.min(9000, 3500 + text.length * 120);
   }
 
   setRemotePos(id, x, z) {
@@ -924,6 +957,14 @@ export class GameScene {
       }
     }
     return p;
+  }
+
+  /** 뒤쪽 반원 배치 (앞이 열려 있음) */
+  arc(z, i, n) {
+    const r = Math.max(1.1, 0.55 * n);
+    const span = Math.min(Math.PI * 0.85, 0.75 * (n - 1));
+    const a = -Math.PI / 2 - span / 2 + (n > 1 ? (span * i) / (n - 1) : span / 2);
+    return new THREE.Vector3(z.x + Math.cos(a) * r, 0, z.z + 0.4 + Math.sin(a) * r * 0.55);
   }
 
   circle(z, i, n) {
@@ -998,7 +1039,17 @@ export class GameScene {
       else c.arms[1].rotation.z = -0.18;
       c.voiceRing.material.opacity = sp ? 0.45 + Math.sin(t * 6) * 0.35 : 0;
       c.group.visible = true;
-      c.label.material.opacity = c.connected === false ? 0.45 : 1;
+      // 말풍선 표시 시간
+      if (c.bubble) {
+        const left = c.bubbleUntil - performance.now();
+        c.bubble.material.opacity = Math.max(0, Math.min(1, left / 400));
+        if (left <= 0) {
+          c.group.remove(c.bubble);
+          c.bubble.material.map.dispose();
+          c.bubble.material.dispose();
+          c.bubble = null;
+        }
+      }
     }
     // 내 캐릭터가 건물 뒤에 있으면 건물을 반투명하게
     const me = this.chars.get(this.meId)?.group.position;
@@ -1133,10 +1184,65 @@ function labelTexture(text, { size = 40, bg, color, pad = 16, radius = 999 }) {
   tex.anisotropy = 4;
   return tex;
 }
+function makeBadges(alias, gender) {
+  const tex = labelTexture(alias, { size: 56, bg: '#fffaf2', color: gender === 'male' ? '#2f4f7f' : '#9a3f55', pad: 18, radius: 14 });
+  const w = Math.min(0.62, 0.17 * alias.length + 0.18);
+  const h = (w * tex.image.height) / tex.image.width;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, polygonOffset: true, polygonOffsetFactor: -2 });
+  const front = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  back.rotation.y = Math.PI;
+  return { front, back };
+}
+
+function bubbleSprite(text) {
+  const t = String(text).slice(0, 40);
+  // 한 줄 최대 14자, 최대 2줄
+  const lines = [];
+  for (let i = 0; i < t.length && lines.length < 2; i += 14) lines.push(t.slice(i, i + 14));
+  if (t.length > 28) lines[1] = lines[1].slice(0, 13) + '…';
+  const size = 40;
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d');
+  const font = `700 ${size}px "Pretendard","Apple SD Gothic Neo","Noto Sans KR",sans-serif`;
+  ctx.font = font;
+  const w = Math.ceil(Math.max(...lines.map((l) => ctx.measureText(l).width))) + 44;
+  const lh = size * 1.3;
+  const bh = Math.ceil(lh * lines.length + 26);
+  c.width = Math.max(w, 90);
+  c.height = bh + 22;
+  ctx.font = font;
+  ctx.fillStyle = 'rgba(255,255,255,0.97)';
+  ctx.strokeStyle = 'rgba(58,46,37,0.25)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(2, 2, c.width - 4, bh - 2, 22);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath(); // 꼬리
+  ctx.moveTo(c.width / 2 - 14, bh - 2);
+  ctx.lineTo(c.width / 2, bh + 18);
+  ctx.lineTo(c.width / 2 + 14, bh - 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#3a2e25';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => ctx.fillText(l, c.width / 2, 13 + lh * i + lh / 2));
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  const H = 0.26 * (c.height / 60);
+  sp.scale.set((H * c.width) / c.height, H, 1);
+  sp.center.set(0.5, 0);
+  sp.renderOrder = 11;
+  return sp;
+}
+
 function labelSprite(text) {
   const tex = labelTexture(text, { size: 44, bg: 'rgba(255,252,246,0.95)', color: '#3a2e25', pad: 22 });
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  const h = 0.44;
+  const h = 0.34;
   sp.scale.set((h * tex.image.width) / tex.image.height, h, 1);
   sp.renderOrder = 10;
   return sp;

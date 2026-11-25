@@ -593,7 +593,8 @@ function addChat(msg, quiet = false) {
   list.push(msg);
   if (list.length > 100) list.shift();
   if (msg.channel === st.channel) renderChatLog();
-  void quiet;
+  // 실시간으로 받은 메시지는 보낸 사람 머리 위 말풍선으로도 보여준다 (받을 권한이 있는 채널만 도착함)
+  if (!quiet) st.scene?.showBubble(msg.from, msg.text);
 }
 function renderChatTabs() {
   const chs = st.view.channels;
