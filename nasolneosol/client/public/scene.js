@@ -1462,7 +1462,7 @@ export class GameScene {
         const u = 1 - c.jumpT / 0.6;
         jumpY = Math.sin(Math.PI * u) * 1.1;
       }
-      g.position.y = (lying ? 0.66 : seated && c.freePose ? (c.freePose.y ?? 0) : 0) + jumpY;
+      g.position.y = (lying ? 0.95 : seated && c.freePose ? (c.freePose.y ?? 0) : 0) + jumpY;
       c.legs.forEach((leg, i) => {
         const goal = seated ? -1.45 : moving ? Math.sin(w + i * Math.PI) * 0.6 : 0;
         leg.rotation.x += (goal - leg.rotation.x) * Math.min(1, dt * 12);
