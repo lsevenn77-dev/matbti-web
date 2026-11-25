@@ -202,3 +202,53 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
   #screen-game:has(#joystick:not([hidden])) .panel { bottom: 132px; max-height: calc(100% - 200px); }
 }
 .chat-log .m.notice { color: #b4602f; font-weight: 700; }
+
+/* ── 폰 가로: UI 를 작게 (3D 장면을 가리지 않게) ── */
+@media (orientation: landscape) and (max-height: 560px) {
+  .hud { padding: calc(6px + var(--safe-t)) 10px 0; }
+  .loc-pill { padding: 4px 10px; font-size: 11px; gap: 6px; }
+  .loc-pill b { font-size: 13px; }
+  .phase-badge { padding: 4px 12px; font-size: 13px; box-shadow: 0 3px 0 #d9a92a, var(--shadow); }
+  .phase-badge .timer { font-size: 12px; padding: 1px 6px; }
+  #minimap { width: 72px; height: 58px; border-radius: 12px; border-width: 2px; }
+  .map-wrap .count { font-size: 10px; padding: 1px 8px; }
+  .sub-row { top: calc(36px + var(--safe-t)); gap: 4px; }
+  #phase-sub, .voice-badge { font-size: 10px; padding: 2px 8px; }
+  .dev-bar { top: calc(36px + var(--safe-t)); }
+  .dev-bar button { font-size: 10px; padding: 2px 8px; }
+  .toast { font-size: 12px; padding: 6px 10px; }
+  .intro-stage { top: calc(40px + var(--safe-t)); padding: 6px 10px; min-width: 240px; gap: 8px; }
+  .intro-stage img { width: 30px; height: 30px; border-radius: 8px; }
+  .intro-stage .facts, .intro-stage .order { font-size: 10px; }
+
+  .panel { width: min(280px, 34vw); left: 8px; bottom: 8px; padding: 0; max-height: calc(100% - 92px); }
+  .panel .box { padding: 8px; border-radius: 14px; }
+  .panel h3 { font-size: 12px; margin-bottom: 2px; }
+  .panel p { font-size: 11px; margin: 2px 0; }
+  .grid { grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 4px; }
+  .pcard { padding: 2px; border-radius: 8px; border-width: 1.5px; font-size: 10px; line-height: 1.3; }
+  .pcard img { border-radius: 6px; }
+  .pcard .tag { font-size: 8px; padding: 1px 3px; }
+  .panel .btn, .row .btn { min-height: 30px; padding: 5px 8px; font-size: 12px; border-radius: 10px; }
+  .tapzone { height: 80px; font-size: 16px; margin-top: 4px; }
+  ol.rank { font-size: 11px; }
+  .pill { font-size: 10px; padding: 1px 6px; }
+
+  .chat { width: min(250px, 30vw); height: 104px; right: 8px; bottom: 8px; padding: 4px 8px 6px; border-radius: 14px; }
+  .chat-tabs button { font-size: 10px; padding: 2px 7px; }
+  .chat-toggle { font-size: 10px; padding: 2px 4px; }
+  .chat-log { font-size: 11px; line-height: 1.35; }
+  .chat-form { gap: 4px; }
+  .chat-form input { padding: 4px 8px; font-size: 16px; border-radius: 9px; height: 28px; }
+  .chat-form .btn { min-height: 28px; padding: 3px 8px; font-size: 11px; }
+  .sheet { width: min(250px, 30vw); right: 8px; bottom: 120px; }
+
+  .joystick { width: 88px; height: 88px; left: 12px; bottom: 12px; }
+  .joystick .knob { width: 40px; height: 40px; margin: -20px 0 0 -20px; }
+  .actions { right: calc(min(250px, 30vw) + 18px); bottom: 10px; gap: 8px; }
+  .actions .act { width: 50px; height: 50px; font-size: 12px; border-width: 2px; }
+  #screen-game:has(#joystick:not([hidden])) .panel { bottom: 106px; max-height: calc(100% - 196px); }
+  #screen-game:has(.chat.min) .actions { right: 10px; bottom: 48px; }
+  #screen-game:has(.chat.min) .toast { bottom: 48px; }
+  .toast { bottom: 118px; }
+}
