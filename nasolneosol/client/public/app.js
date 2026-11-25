@@ -223,6 +223,8 @@ function onMessage(m) {
     onState(m.view);
   } else if (m.t === 'pos') {
     st.scene?.setRemotePos(m.id, m.x, m.z);
+  } else if (m.t === 'emote') {
+    st.scene?.applyPose(m.id, m);
   } else if (m.t === 'chat') {
     addChat(m.message);
   } else if (m.t === 'ack') {
@@ -287,6 +289,7 @@ function renderHud() {
   $('#phase-badge').classList.toggle('date', !!v.myDate);
   $('#count').textContent = `👤 ${v.participants.filter((p) => p.connected).length}/${v.participants.length}`;
   $('#joystick').hidden = v.phase !== 'freeRoam';
+  $('#actions').hidden = v.phase !== 'freeRoam';
 
   const vb = $('#voice-badge');
   if (v.voice?.publish && v.phase === 'selfIntro') vb.textContent = '🎙 내 차례 · 송출 중(모의)';
@@ -314,7 +317,10 @@ setInterval(() => {
   $('#timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   if (st.view.phase === 'minigame') renderMinigameTick();
   st.scene?.drawMinimap($('#minimap'));
-  if (st.view.phase === 'freeRoam') updateLoc();
+  if (st.view.phase === 'freeRoam') {
+    updateLoc();
+    updatePoseButton();
+  }
 }, 200);
 
 function updateLoc() {
@@ -325,6 +331,71 @@ function updateLoc() {
   const place = zone === 'free' && me ? st.scene.placeOf(me) : zoneLabel(zone);
   $('#loc').textContent = `📍 ${place} · ${timeLabel(timeOfPhase(v.phase))}`;
 }
+
+// ───────────── 앉기·눕기·점프 ─────────────
+let nearSeat = null;
+function myPose() {
+  return st.scene?.chars.get(st.view?.me.id)?.freePose ?? null;
+}
+function updatePoseButton() {
+  const b = $('#btn-pose');
+  if (!st.scene) return;
+  if (st.scene.onPoseCleared == null) st.scene.onPoseCleared = () => sendEmote({ kind: 'stand' });
+  const pose = myPose();
+  nearSeat = pose ? null : st.scene.nearestSeat();
+  if (pose) {
+    b.textContent = '일어나기';
+    b.hidden = false;
+  } else if (nearSeat) {
+    b.textContent = nearSeat.label;
+    b.hidden = false;
+  } else b.hidden = true;
+}
+function sendEmote(e) {
+  sendWs({ t: 'act', action: { type: 'emote', ...e } });
+}
+function togglePose() {
+  if (st.view?.phase !== 'freeRoam' || !st.scene) return;
+  const meId = st.view.me.id;
+  if (myPose()) {
+    st.scene.applyPose(meId, { kind: 'stand' });
+    sendEmote({ kind: 'stand' });
+  } else if (nearSeat) {
+    const e = { kind: nearSeat.kind, x: nearSeat.x, z: nearSeat.z, face: nearSeat.face, y: nearSeat.y ?? 0 };
+    st.scene.applyPose(meId, e);
+    sendWs({ t: 'act', action: { type: 'move', x: e.x, z: e.z } });
+    sendEmote(e);
+  }
+  updatePoseButton();
+}
+function jump() {
+  if (st.view?.phase !== 'freeRoam' || !st.scene) return;
+  if (myPose()) {
+    st.scene.applyPose(st.view.me.id, { kind: 'stand' });
+    sendEmote({ kind: 'stand' });
+  }
+  st.scene.applyPose(st.view.me.id, { kind: 'jump' });
+  sendEmote({ kind: 'jump' });
+}
+$('#btn-pose').addEventListener('click', togglePose);
+$('#btn-jump').addEventListener('click', jump);
+addEventListener('keydown', (e) => {
+  if (e.target.closest?.('input, textarea')) return;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    jump();
+  } else if (e.code === 'KeyE') togglePose();
+});
+
+// ───────────── 가로 화면 (폰) ─────────────
+$('#btn-landscape').addEventListener('click', async () => {
+  try {
+    await document.documentElement.requestFullscreen?.();
+    await screen.orientation?.lock?.('landscape');
+  } catch {
+    /* iPhone 은 지원 안 함 — 직접 돌려야 함 */
+  }
+});
 
 // ───────────── 조이스틱 (자유 구경) ─────────────
 const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };

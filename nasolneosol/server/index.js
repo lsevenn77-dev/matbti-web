@@ -84,6 +84,10 @@ export function createServer(opts = {}) {
     const room = new Room({ id, config, members, timeScale, voice });
     const bots = new BotDriver(room, { introSec: Number(env.BOT_INTRO_SEC || 8) });
     room.listeners.add((ev) => {
+      if (ev.type === 'emote') {
+        const msg = { t: 'emote', id: ev.id, kind: ev.kind, x: ev.x, z: ev.z, face: ev.face, y: ev.y };
+        for (const p of room.participants.values()) if (!p.isBot && p.id !== ev.id) send(p.userId, msg);
+      }
       if (ev.type === 'pos') {
         const msg = { t: 'pos', id: ev.id, x: Math.round(ev.x * 100) / 100, z: Math.round(ev.z * 100) / 100 };
         for (const p of room.participants.values()) if (!p.isBot && p.id !== ev.id) send(p.userId, msg);

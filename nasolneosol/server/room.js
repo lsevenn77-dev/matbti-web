@@ -491,6 +491,17 @@ export class Room {
     return { ok: true, silent: true };
   }
 
+  /** 자유 구경 중 앉기·눕기·일어서기·점프 (연출용, 다른 사람에게 그대로 전달) */
+  act_emote(p, { kind, x, z, face, y }) {
+    if (this.phase !== 'freeRoam') return fail('자유 구경 시간에만 할 수 있다');
+    if (!['sit', 'lie', 'stand', 'jump'].includes(kind)) return fail('알 수 없는 동작');
+    const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
+    const ev = { type: 'emote', id: p.id, kind, x: clamp(num(x), WORLD.minX, WORLD.maxX), z: clamp(num(z), WORLD.minZ, WORLD.maxZ), face: num(face), y: clamp(num(y), 0, 1) };
+    if (kind === 'sit' || kind === 'lie') p.pos = { x: ev.x, z: ev.z };
+    for (const fn of this.listeners) fn(ev);
+    return { ok: true, silent: true };
+  }
+
   act_chat(p, { channel, text }) {
     const msg = String(text ?? '').trim().slice(0, 200);
     if (!msg) return fail('빈 메시지');

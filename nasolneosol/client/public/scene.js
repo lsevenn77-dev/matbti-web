@@ -884,7 +884,7 @@ export class GameScene {
   }
 
   /** 소품 하나를 정규화해서 만든다: 회전(spec.rot) → 지정 축 크기에 맞춤 → 바닥(y=0)·중앙 정렬 */
-  makeProp(id, { fit = 'x', size = 1, rotY = 0, opaqueShadow = true } = {}) {
+  makeProp(id, { fit = 'x', size = 1, rotY = 0, opaqueShadow = true, box: fitBox = null } = {}) {
     const p = this.props?.[id];
     if (!p) return null;
     const inner = p.gltf.scene.clone(true);
@@ -894,7 +894,8 @@ export class GameScene {
     holder.updateMatrixWorld(true);
     let box = new THREE.Box3().setFromObject(holder);
     const dims = box.getSize(new THREE.Vector3());
-    const k = size / Math.max(1e-4, fit === 'x' ? dims.x : fit === 'z' ? dims.z : dims.y);
+    let k = size / Math.max(1e-4, fit === 'x' ? dims.x : fit === 'z' ? dims.z : dims.y);
+    if (fitBox) k = Math.min(fitBox.x / Math.max(1e-4, dims.x), fitBox.z / Math.max(1e-4, dims.z));
     holder.scale.setScalar(k);
     holder.updateMatrixWorld(true);
     box = new THREE.Box3().setFromObject(holder);
@@ -920,7 +921,8 @@ export class GameScene {
     for (const h of this.houses ?? []) {
       const id = houseId[h.name];
       if (!P[id]) continue;
-      const m = this.makeProp(id, { fit: 'x', size: h.W + 0.5 });
+      // 벽 충돌 범위(W×D) 밖으로 건물이 튀어나오지 않게: 처마 포함 W+0.6 × D+0.9 안에 맞춤
+      const m = this.makeProp(id, { box: { x: h.W + 0.6, z: h.D + 0.9 } });
       if (!m) continue;
       for (const ch of h.cover.children) if (ch !== h.sign) ch.visible = false;
       m.traverse((o) => o.material && (o.material.transparent = true));
@@ -1155,6 +1157,8 @@ export class GameScene {
     const legs = ['left', 'right'].map((sd) => pick(sd, /(up.?leg|thigh|upperleg)/i)).filter(Boolean);
     const arms = ['left', 'right'].map((sd) => pick(sd, /(arm|upperarm)/i, /(fore|lower|hand)/i)).filter(Boolean);
     c.boneLegs = legs.map((b) => ({ b, rest: b.quaternion.clone() }));
+    const knees = bones.filter((b) => /^(mixamorig:)?(Left|Right)Leg$/i.test(b.name));
+    c.boneKnees = knees.map((b) => ({ b, rest: b.quaternion.clone() }));
     c.boneArms = arms.map((b) => ({ b, rest: b.quaternion.clone() }));
     if (gltf.animations?.length) {
       c.mixer = new THREE.AnimationMixer(model);
@@ -1188,6 +1192,7 @@ export class GameScene {
       const zone = view.zones[p.id];
       c.sit = false;
       c.lookAt = null;
+      if (zone !== 'free') c.freePose = null;
       let pos;
       if (zone === 'free') {
         const sv = p.id === this.meId && this.localPos ? this.localPos : view.positions[p.id];
@@ -1260,6 +1265,11 @@ export class GameScene {
   /** 조이스틱 이동 (자유 구경). dx, dz 는 -1..1 */
   moveLocal(dx, dz, dt) {
     if (!this.freeRoam || !this.localPos) return null;
+    const meC = this.chars.get(this.meId);
+    if (meC?.freePose) {
+      meC.freePose = null;
+      this.onPoseCleared?.();
+    }
     const sp = 5.2;
     this.localPos.x = clamp(this.localPos.x + dx * sp * dt, WORLD.minX, WORLD.maxX);
     this.localPos.z = clamp(this.localPos.z + dz * sp * dt, WORLD.minZ, WORLD.maxZ);
@@ -1307,6 +1317,74 @@ export class GameScene {
     for (const cl of this.clouds ?? []) cl.children.forEach((c) => (c.material.emissiveIntensity = 0.35 * k.cloud));
   }
 
+  /** 앉기·눕기 가능한 자리 (자유 구경용) */
+  buildSeats() {
+    const seats = [];
+    for (const ch of this.chairs ?? []) seats.push({ kind: 'sit', label: '앉기', x: ch.x, z: ch.z, face: Math.atan2(0 - ch.x, 2.2 - ch.z), y: 0.05 });
+    for (const { d } of this.dateSpotGroups ?? []) {
+      if (d.kind !== 'bench' && d.kind !== 'swing') continue;
+      const cx = d.x;
+      const cz = d.z - 0.6;
+      for (const off of [-0.55, 0.55]) {
+        seats.push({ kind: 'sit', label: '앉기', x: cx + Math.cos(d.rot) * off, z: cz - Math.sin(d.rot) * off + 0.15, face: d.rot, y: d.kind === 'swing' ? 0.12 : 0.05 });
+      }
+    }
+    for (const h of this.houses ?? []) {
+      if (h.kind === 'dorm') {
+        for (let i = 0; i < 3; i++) {
+          const bx = h.x - h.W / 2 + 1.3 + i * ((h.W - 2.6) / 2);
+          // 누우면 발이 침대 발치, 머리가 머리판 쪽
+          seats.push({ kind: 'lie', label: '눕기', x: bx, z: h.z - h.D / 2 + 2.25, face: 0 });
+        }
+      } else {
+        for (const sx of [-1, 1]) for (const sz of [-0.6, 0.6]) {
+          seats.push({ kind: 'sit', label: '앉기', x: h.x + sx * (h.W / 2 - 1.0), z: h.z + sz, face: sx < 0 ? Math.PI / 2 : -Math.PI / 2, y: 0.05 });
+        }
+      }
+    }
+    this.seats = seats;
+  }
+
+  /** 내 근처 자리 (1.3 이내) */
+  nearestSeat() {
+    if (!this.freeRoam || !this.localPos) return null;
+    this.seats ?? this.buildSeats();
+    let best = null;
+    let bd = 1.3;
+    for (const st of this.seats) {
+      const dd = Math.hypot(st.x - this.localPos.x, st.z - this.localPos.z);
+      if (dd < bd) {
+        bd = dd;
+        best = st;
+      }
+    }
+    return best;
+  }
+
+  /** 포즈 적용 (나 또는 다른 사람). kind: sit | lie | stand | jump */
+  applyPose(id, { kind, x, z, face, y }) {
+    const c = this.chars.get(id);
+    if (!c) return;
+    if (kind === 'jump') {
+      if (!c.jumpT) c.jumpT = 0.6;
+      return;
+    }
+    if (kind === 'stand') {
+      c.freePose = null;
+      return;
+    }
+    c.freePose = { kind, x, z, face, y };
+    // 버튼을 누르면 걸어가지 않고 바로 그 자리에 앉거나 눕는다
+    c.group.position.x = x;
+    c.group.position.z = z;
+    c.target.set(x, 0, z);
+    c.group.rotation.y = face;
+    if (id === this.meId && this.localPos) {
+      this.localPos.x = x;
+      this.localPos.z = z;
+    }
+  }
+
   /** 지금 내 위치 이름 (자유 구경 HUD 용) */
   placeOf(pos) {
     for (const h of this.houses ?? []) if (pos.x > h.minX && pos.x < h.maxX && pos.z > h.minZ && pos.z < h.maxZ) return h.name;
@@ -1347,6 +1425,10 @@ export class GameScene {
     }
     for (const [id, c] of this.chars) {
       const g = c.group;
+      if (c.freePose) {
+        c.target.set(c.freePose.x, 0, c.freePose.z);
+        c.lookAt = null;
+      }
       const d = c.target.clone().sub(g.position);
       d.y = 0;
       const dist = d.length();
@@ -1360,13 +1442,27 @@ export class GameScene {
       } else if (c.faceFixed != null && !moving) {
         c.face = c.faceFixed;
       }
+      if (c.freePose && !moving) c.face = c.freePose.face;
       // 부드러운 회전
       let diff = c.face - g.rotation.y;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       g.rotation.y += diff * Math.min(1, dt * 8);
       // 걷기·앉기·숨쉬기
       const w = t * 10 + c.phase;
-      const seated = c.sit && !moving;
+      const lying = c.freePose?.kind === 'lie' && !moving;
+      const seated = (c.sit || c.freePose?.kind === 'sit') && !moving;
+      // 눕기: 몸을 뒤로 눕힘 (머리는 침대 머리판 쪽)
+      const tilt = lying ? -Math.PI / 2 : 0;
+      g.rotation.x += (tilt - g.rotation.x) * Math.min(1, dt * 8);
+      c.ring.visible = c.voiceRing.visible = !lying;
+      // 점프
+      let jumpY = 0;
+      if (c.jumpT > 0) {
+        c.jumpT = Math.max(0, c.jumpT - dt);
+        const u = 1 - c.jumpT / 0.6;
+        jumpY = Math.sin(Math.PI * u) * 1.1;
+      }
+      g.position.y = (lying ? 0.66 : seated && c.freePose ? (c.freePose.y ?? 0) : 0) + jumpY;
       c.legs.forEach((leg, i) => {
         const goal = seated ? -1.45 : moving ? Math.sin(w + i * Math.PI) * 0.6 : 0;
         leg.rotation.x += (goal - leg.rotation.x) * Math.min(1, dt * 12);
@@ -1379,7 +1475,12 @@ export class GameScene {
         const q = new THREE.Quaternion();
         const X = new THREE.Vector3(1, 0, 0);
         c.boneLegs?.forEach(({ b, rest }, i) => {
-          const a = seated ? 1.3 : moving ? Math.sin(w + i * Math.PI) * 0.55 : 0;
+          // 생성 모델 리그: 허벅지는 -X 로 돌려야 앞으로 든다 (+X 면 뒤로 꺾임)
+          const a = seated ? -1.45 : moving ? Math.sin(w + i * Math.PI) * 0.55 : 0;
+          b.quaternion.copy(rest).multiply(q.setFromAxisAngle(X, a));
+        });
+        c.boneKnees?.forEach(({ b, rest }, i) => {
+          const a = seated ? 1.45 : moving ? Math.max(0, Math.sin(w + i * Math.PI + 0.6)) * 0.5 : 0;
           b.quaternion.copy(rest).multiply(q.setFromAxisAngle(X, a));
         });
         c.boneArms?.forEach(({ b, rest }, i) => {
