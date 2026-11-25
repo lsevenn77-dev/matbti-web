@@ -1,5 +1,5 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel } from './scene.js';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -283,7 +283,7 @@ function renderHud() {
   else sub = `나는 ${v.me.alias}`;
   $('#phase-sub').textContent = sub;
 
-  $('#loc').textContent = `📍 ${zoneLabel(v.zones[v.me.id])}`;
+  updateLoc();
   $('#phase-badge').classList.toggle('date', !!v.myDate);
   $('#count').textContent = `👤 ${v.participants.filter((p) => p.connected).length}/${v.participants.length}`;
   $('#joystick').hidden = v.phase !== 'freeRoam';
@@ -314,7 +314,17 @@ setInterval(() => {
   $('#timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   if (st.view.phase === 'minigame') renderMinigameTick();
   st.scene?.drawMinimap($('#minimap'));
+  if (st.view.phase === 'freeRoam') updateLoc();
 }, 200);
+
+function updateLoc() {
+  const v = st.view;
+  if (!v) return;
+  const zone = v.zones[v.me.id];
+  const me = st.scene?.chars.get(v.me.id)?.group.position;
+  const place = zone === 'free' && me ? st.scene.placeOf(me) : zoneLabel(zone);
+  $('#loc').textContent = `📍 ${place} · ${timeLabel(timeOfPhase(v.phase))}`;
+}
 
 // ───────────── 조이스틱 (자유 구경) ─────────────
 const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };
@@ -349,11 +359,31 @@ const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
   let last = performance.now();
+  // 키보드: WASD / 방향키 (채팅 입력 중에는 무시)
+  const keys = new Set();
+  const KEYMAP = { KeyW: 'u', ArrowUp: 'u', KeyS: 'd', ArrowDown: 'd', KeyA: 'l', ArrowLeft: 'l', KeyD: 'r', ArrowRight: 'r' };
+  addEventListener('keydown', (e) => {
+    if (e.target.closest?.('input, textarea')) return;
+    if (KEYMAP[e.code]) {
+      keys.add(KEYMAP[e.code]);
+      if (st.view?.phase === 'freeRoam') e.preventDefault();
+    }
+  });
+  addEventListener('keyup', (e) => KEYMAP[e.code] && keys.delete(KEYMAP[e.code]));
+  addEventListener('blur', () => keys.clear());
   const loop = (now) => {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
-    if (joy.active && st.scene && st.view?.phase === 'freeRoam' && (joy.dx || joy.dz)) {
-      const p = st.scene.moveLocal(joy.dx, joy.dz, dt);
+    let kx = (keys.has('r') ? 1 : 0) - (keys.has('l') ? 1 : 0);
+    let kz = (keys.has('d') ? 1 : 0) - (keys.has('u') ? 1 : 0);
+    if (kx && kz) {
+      kx *= Math.SQRT1_2;
+      kz *= Math.SQRT1_2;
+    }
+    const mx = joy.active ? joy.dx : kx;
+    const mz = joy.active ? joy.dz : kz;
+    if (st.scene && st.view?.phase === 'freeRoam' && (mx || mz)) {
+      const p = st.scene.moveLocal(mx, mz, dt);
       if (p && now - joy.lastSend > 120) {
         joy.lastSend = now;
         sendWs({ t: 'act', action: { type: 'move', x: p.x, z: p.z } });

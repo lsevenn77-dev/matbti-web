@@ -1,3 +1,15 @@
 {
-  "c01": "/models/c01.glb"
+  "_note": "Higgsfield(Meshy 7) 생성 → UV 섬 재배치(여백 8px, 밉맵 번짐 제거) → 미사용 데이터 정리한 GLB. 정식 서비스 전 R2 로 이전 예정",
+  "c01": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/bf186a66-3d9f-4fd9-b475-21645b90ac68.glb" },
+  "c02": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/08e96436-1bee-4b95-b4cc-5007510e20a1.glb" },
+  "c03": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/c488f111-7747-43cc-aaa1-e504a33c96e4.glb" },
+  "c04": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/0b4d7e06-c0db-437e-aca2-f5b7cc6dc992.glb" },
+  "c05": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/4858f345-b4c8-4b28-9c2b-2b95777819de.glb" },
+  "c06": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/f8fa3841-bd65-4efb-b6b5-38fabdd372d0.glb" },
+  "c07": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/31454429-7d91-4a63-a416-00cc5571f4db.glb" },
+  "c08": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/4e1926f9-4e6d-4077-bca3-d80daf4846be.glb" },
+  "c09": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/f3fe6bc3-f518-4271-8f26-71926071b6c7.glb", "headScale": 1.2 },
+  "c10": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/900f46c4-fbf3-423c-ab58-3cd6c56528c0.glb" },
+  "c11": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/c8171a39-920f-461d-9a76-af5af9ed1ec0.glb", "headScale": 1.1 },
+  "c12": { "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/72da7a21-7a9c-4b4c-a157-5adc76922ed7.glb" }
 }
