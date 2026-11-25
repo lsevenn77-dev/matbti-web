@@ -241,3 +241,34 @@ test('연락처 교환(켰을 때) — 양쪽 모두 동의해야만 공개', ()
 test('기본 설정 예상 시간은 기획서 70분안과 맞다', () => {
   assert.equal(Math.round(estimateMinutes(makeConfig())), 69); // 표의 '전환 여유 1분' 제외
 });
+
+test('데이트 중 숙소에서 기다리는 사람은 돌아다닐 수 있고, 데이트 중인 사람은 못 움직인다', () => {
+  const { room, clock } = setup({}, { voter: 'female' });
+  runUntil(room, clock, 'firstVote');
+  room.handle(females(room)[0], { type: 'vote', target: males(room)[0] });
+  runUntil(room, clock, 'date1');
+  const g = room.dates.date1[0];
+  const waiting = males(room)[5];
+  assert.equal(room.handle(waiting, { type: 'move', x: 1, z: 2 }).ok, true);
+  assert.equal(room.handle(waiting, { type: 'emote', kind: 'jump' }).ok, true);
+  assert.equal(room.handle(g.members[0], { type: 'move', x: 1, z: 2 }).ok, false);
+  const v = room.viewFor(g.members[0]);
+  assert.ok(v.roaming.includes(waiting));
+  assert.ok(!v.roaming.includes(g.members[0]));
+  assert.deepEqual(v.positions[waiting], { x: 1, z: 2 });
+  // 다음 단계로 넘어가면 위치는 초기화된다
+  runUntil(room, clock, 'freeRoam');
+  assert.equal(room.viewFor(waiting).positions[waiting], undefined);
+});
+
+test('개발 도구: 다음 단계 건너뛰기로 끝까지 가고, 배속 변경은 남은 시간을 줄인다', () => {
+  const { room, clock } = setup({}, { voter: 'female' });
+  runUntil(room, clock, 'firstVote');
+  const left = room.phaseEndsAt - room.now();
+  room.devSetSpeed(10);
+  assert.ok(Math.abs(room.phaseEndsAt - room.now() - left / 10) < 5);
+  room.devSetSpeed(1);
+  let guard = 0;
+  while (room.phase !== 'ended' && guard++ < 50) room.devSkip();
+  assert.equal(room.phase, 'ended');
+});

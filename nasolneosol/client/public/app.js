@@ -165,6 +165,9 @@ $('#btn-bots').addEventListener('click', async () => {
   setTimeout(() => fetch('/api/dev/fill-bots', { method: 'POST' }), 300);
 });
 
+$('#btn-dev-fast').addEventListener('click', () => sendWs({ t: 'dev', op: 'speed', scale: st.view?.timeScale > 1 ? 1 : 10 }));
+$('#btn-dev-skip').addEventListener('click', () => sendWs({ t: 'dev', op: 'skip' }));
+
 // ───────────── 통신 ─────────────
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -270,7 +273,8 @@ function phaseToast(v) {
   if (v.phase === 'firstVote') return v.voterGender === v.me.gender ? '첫인상 선택 시간이야. 사진을 보고 한 명을 골라 줘.' : `이번 회차는 ${G[v.voterGender]}가 선택해. 기다려 줘.`;
   if (v.phase === 'freeRoam') return '자유 구경! 조이스틱이나 바닥을 눌러 이동해. 캐릭터를 누르면 프로필, 대화는 텍스트로.';
   if (v.myDate) return `${PHASE_NAMES[v.phase]} 시작! 같은 그룹끼리만 음성이 연결돼 (모의).`;
-  if (v.phase.startsWith('date')) return '이번 데이트에는 참여하지 않아. 숙소에서 텍스트로 대화할 수 있어.';
+  if (v.phase.startsWith('date')) return '이번 데이트에는 참여하지 않아. 숙소에서 텍스트로 대화하거나 밖으로 나가 돌아다녀도 돼.';
+  if (canRoam()) return `${PHASE_NAMES[v.phase]} · 기다리는 동안 자유롭게 돌아다녀도 돼.`;
   return `${PHASE_NAMES[v.phase]}`;
 }
 
@@ -280,7 +284,7 @@ function renderHud() {
   let sub = '';
   if (v.phase === 'intro' && v.voterGender) sub = `첫인상 선택: ${G[v.voterGender]} · 2차 데이트권 게임: ${G[v.ticketGender]}`;
   else if (v.myDate) sub = `함께: ${v.myDate.members.filter((x) => x !== v.me.id).map(name).join(', ')}`;
-  else if (v.phase.startsWith('date')) sub = `${CHANNEL_NAMES[`dorm_${v.me.gender}`]}에서 대기 · 텍스트만`;
+  else if (v.phase.startsWith('date')) sub = `${CHANNEL_NAMES[`dorm_${v.me.gender}`]}에서 대기 · 텍스트만 · 이동 가능`;
   else if (v.phase === 'selfIntro' && v.intro) sub = `${Math.min(v.intro.index + 1, v.intro.order.length)} / ${v.intro.order.length}번째`;
   else sub = `나는 ${v.me.alias}`;
   $('#phase-sub').textContent = sub;
@@ -288,8 +292,11 @@ function renderHud() {
   updateLoc();
   $('#phase-badge').classList.toggle('date', !!v.myDate);
   $('#count').textContent = `👤 ${v.participants.filter((p) => p.connected).length}/${v.participants.length}`;
-  $('#joystick').hidden = v.phase !== 'freeRoam';
-  $('#actions').hidden = v.phase !== 'freeRoam';
+  $('#dev-bar').hidden = !st.info?.devTools;
+  $('#btn-dev-fast').classList.toggle('on', v.timeScale > 1);
+  $('#btn-dev-fast').textContent = v.timeScale > 1 ? `⏩ ×${v.timeScale} 끄기` : '⏩ 빨리 ×10';
+  $('#joystick').hidden = !canRoam();
+  $('#actions').hidden = !canRoam();
 
   const vb = $('#voice-badge');
   if (v.voice?.publish && v.phase === 'selfIntro') vb.textContent = '🎙 내 차례 · 송출 중(모의)';
@@ -317,7 +324,7 @@ setInterval(() => {
   $('#timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   if (st.view.phase === 'minigame') renderMinigameTick();
   st.scene?.drawMinimap($('#minimap'));
-  if (st.view.phase === 'freeRoam') {
+  if (canRoam()) {
     updateLoc();
     updatePoseButton();
   }
@@ -328,8 +335,13 @@ function updateLoc() {
   if (!v) return;
   const zone = v.zones[v.me.id];
   const me = st.scene?.chars.get(v.me.id)?.group.position;
-  const place = zone === 'free' && me ? st.scene.placeOf(me) : zoneLabel(zone);
+  const place = canRoam() && me ? st.scene.placeOf(me) : zoneLabel(zone);
   $('#loc').textContent = `📍 ${place} · ${timeLabel(timeOfPhase(v.phase))}`;
+}
+
+/** 내가 지금 걸어다닐 수 있는지 (자유 구경, 또는 숙소에서 대기 중) */
+function canRoam() {
+  return !!st.view?.roaming?.includes(st.view.me.id);
 }
 
 // ───────────── 앉기·눕기·점프 ─────────────
@@ -355,7 +367,7 @@ function sendEmote(e) {
   sendWs({ t: 'act', action: { type: 'emote', ...e } });
 }
 function togglePose() {
-  if (st.view?.phase !== 'freeRoam' || !st.scene) return;
+  if (!canRoam() || !st.scene) return;
   const meId = st.view.me.id;
   if (myPose()) {
     st.scene.applyPose(meId, { kind: 'stand' });
@@ -369,7 +381,7 @@ function togglePose() {
   updatePoseButton();
 }
 function jump() {
-  if (st.view?.phase !== 'freeRoam' || !st.scene) return;
+  if (!canRoam() || !st.scene) return;
   if (myPose()) {
     st.scene.applyPose(st.view.me.id, { kind: 'stand' });
     sendEmote({ kind: 'stand' });
@@ -437,7 +449,7 @@ const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };
     if (e.target.closest?.('input, textarea')) return;
     if (KEYMAP[e.code]) {
       keys.add(KEYMAP[e.code]);
-      if (st.view?.phase === 'freeRoam') e.preventDefault();
+      if (canRoam()) e.preventDefault();
     }
   });
   addEventListener('keyup', (e) => KEYMAP[e.code] && keys.delete(KEYMAP[e.code]));
@@ -453,7 +465,7 @@ const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };
     }
     const mx = joy.active ? joy.dx : kx;
     const mz = joy.active ? joy.dz : kz;
-    if (st.scene && st.view?.phase === 'freeRoam' && (mx || mz)) {
+    if (st.scene && canRoam() && (mx || mz)) {
       const p = st.scene.moveLocal(mx, mz, dt);
       if (p && now - joy.lastSend > 120) {
         joy.lastSend = now;
@@ -678,7 +690,7 @@ function openProfile(pid) {
 }
 
 function tapFloor(x, z) {
-  if (st.view?.phase === 'freeRoam') act({ type: 'move', x, z });
+  if (canRoam()) act({ type: 'move', x, z });
   $('#profile-card').hidden = true;
 }
 
@@ -694,9 +706,33 @@ function addChat(msg, quiet = false) {
   list.push(msg);
   if (list.length > 100) list.shift();
   if (msg.channel === st.channel) renderChatLog();
+  if (chatMin && !quiet) {
+    chatUnread++;
+    renderChatToggle();
+  }
   // 실시간으로 받은 메시지는 보낸 사람 머리 위 말풍선으로도 보여준다 (받을 권한이 있는 채널만 도착함)
   if (!quiet) st.scene?.showBubble(msg.from, msg.text);
 }
+// 채팅창 접기/펴기 (기기마다 기억)
+let chatMin = false;
+let chatUnread = 0;
+try { chatMin = localStorage.getItem('nsns-chat-min') === '1'; } catch {}
+function renderChatToggle() {
+  $('#chat').classList.toggle('min', chatMin);
+  $('#btn-chat-toggle').innerHTML = chatMin
+    ? `💬 채팅 펴기${chatUnread ? `<span class="unread">${chatUnread > 99 ? '99+' : chatUnread}</span>` : ''}`
+    : '접기 ▾';
+  $('#btn-chat-toggle').setAttribute('aria-label', chatMin ? '채팅 펴기' : '채팅 접기');
+}
+$('#btn-chat-toggle').addEventListener('click', () => {
+  chatMin = !chatMin;
+  if (!chatMin) chatUnread = 0;
+  try { localStorage.setItem('nsns-chat-min', chatMin ? '1' : '0'); } catch {}
+  renderChatToggle();
+  if (!chatMin) renderChatLog();
+});
+renderChatToggle();
+
 function renderChatTabs() {
   const chs = st.view.channels;
   if (!chs.includes(st.channel)) st.channel = chs[0] ?? null;

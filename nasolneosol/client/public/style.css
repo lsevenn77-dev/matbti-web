@@ -175,3 +175,29 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
   .rot-icon { font-size: 54px; }
   .rotate-hint .btn { width: auto; padding: 12px 22px; }
 }
+
+/* 채팅 접기 */
+.chat-head { display: flex; align-items: center; gap: 6px; }
+.chat-head .chat-tabs { flex: 1; min-width: 0; }
+.chat-toggle { flex: none; border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 4px 6px; cursor: pointer; }
+.chat-toggle .unread { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 99px; background: #e98a5d; color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+.chat.min { left: auto !important; right: 12px; bottom: calc(12px + var(--safe-b)) !important; width: auto !important; height: auto !important; border-radius: 99px !important; padding: 4px 6px !important; }
+.chat.min .chat-log, .chat.min .chat-form, .chat.min .chat-tabs { display: none; }
+.chat.min .chat-toggle { color: var(--ink); font-weight: 700; font-size: 13px; padding: 6px 10px; }
+#screen-game:has(.chat.min) .panel { bottom: calc(60px + var(--safe-b)); }
+#screen-game:has(.chat.min) .actions { right: 16px; bottom: calc(70px + var(--safe-b)); }
+#screen-game:has(.chat.min) .sheet { bottom: 70px; }
+@media (orientation: landscape) and (max-height: 560px) {
+  #screen-game:has(.chat.min) .actions { right: 16px; bottom: 64px; flex-direction: column; }
+  #screen-game:has(.chat.min) .toast { bottom: 64px; }
+  #screen-game:has(.chat.min) .panel { bottom: 12px; }
+}
+
+/* 개발 도구 (DEV_TOOLS=1 일 때만) */
+.dev-bar { position: absolute; top: calc(58px + var(--safe-t)); left: 50%; transform: translateX(-50%); display: flex; gap: 6px; z-index: 6; }
+.dev-bar button { border: 1px dashed #b98a5a; background: rgba(255,250,242,.9); color: #7a5634; border-radius: 99px; padding: 4px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.dev-bar button.on { background: #7a5634; color: #fff; border-style: solid; }
+/* 가로 화면: 조이스틱이 보이면 안내 패널을 그 위로 */
+@media (orientation: landscape) and (max-height: 560px) {
+  #screen-game:has(#joystick:not([hidden])) .panel { bottom: 132px; max-height: calc(100% - 200px); }
+}

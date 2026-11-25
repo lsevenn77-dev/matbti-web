@@ -24,7 +24,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // --dev: 윈도우/맥/리눅스 공통으로 개발 모드 기본값 (10배속 + 봇 채우기)
 if (process.argv.includes('--dev')) {
-  process.env.TIME_SCALE ??= '10';
+  process.env.TIME_SCALE ??= '1'; // 정상 속도. 빨리 돌리기는 게임 화면 위 개발 버튼으로
   process.env.DEV_TOOLS ??= '1';
 }
 
@@ -321,6 +321,14 @@ export function createServer(opts = {}) {
         const pid = entry.room.pidOfUser(user.id);
         const r = entry.room.handle(pid, msg.action ?? {});
         ws.send(JSON.stringify({ t: 'ack', reqId: msg.reqId, ok: r.ok, error: r.error }));
+      }
+      if (msg.t === 'dev') {
+        if (!devTools) return;
+        const entry = rooms.get(userRoom.get(user.id));
+        if (!entry) return;
+        if (msg.op === 'skip') entry.room.devSkip();
+        if (msg.op === 'speed') entry.room.devSetSpeed(msg.scale);
+        return;
       }
       if (msg.t === 'leaveResult') {
         // 종료된 방의 결과 화면을 닫고 대기 화면으로 돌아감

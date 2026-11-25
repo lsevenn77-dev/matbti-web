@@ -1147,6 +1147,8 @@ export class GameScene {
       nb.front.position.set(0, h * 0.42, fz * 0.62 + 0.02);
       nb.back.position.set(0, h * 0.42, bz * 0.62 - 0.02);
       wrap.add(nb.front, nb.back);
+      // 앉으면 허벅지가 이름표 높이로 올라오므로 가슴 쪽으로 올린다
+      c.mBadges = { nb, y: h * 0.42, lift: h * 0.1, fz: fz * 0.62 + 0.02, bz: bz * 0.62 - 0.02 };
     }
     // 뼈대가 있으면 다리·팔 뼈를 찾아 걷기 흔들기에 사용
     const bones = [];
@@ -1171,7 +1173,10 @@ export class GameScene {
   update(view) {
     this.meId = view.me.id;
     this.todTarget = timeOfPhase(view.phase);
+    const phaseChanged = this.phase !== view.phase;
+    if (phaseChanged) this.localPos = null; // 새 단계는 정해진 자리에서 시작
     this.phase = view.phase;
+    const roaming = new Set(view.roaming ?? []);
     const byZone = new Map();
     for (const p of view.participants) {
       const z = view.zones[p.id];
@@ -1192,7 +1197,7 @@ export class GameScene {
       const zone = view.zones[p.id];
       c.sit = false;
       c.lookAt = null;
-      if (zone !== 'free') c.freePose = null;
+      if (!roaming.has(p.id) || phaseChanged) c.freePose = null;
       let pos;
       if (zone === 'free') {
         const sv = p.id === this.meId && this.localPos ? this.localPos : view.positions[p.id];
@@ -1220,7 +1225,16 @@ export class GameScene {
           pos = this.circle(z, 0, 1);
         }
       }
-      if (zone !== 'free' && p.id === this.meId) this.localPos = null;
+      if (roaming.has(p.id) && zone !== 'free') {
+        // 숙소 대기 중에도 돌아다닐 수 있다: 움직였으면 그 위치, 아니면 숙소 자리
+        const sv = p.id === this.meId && this.localPos ? this.localPos : view.positions?.[p.id];
+        if (sv) {
+          pos = new THREE.Vector3(sv.x, 0, sv.z);
+          c.lookAt = null;
+        }
+        if (p.id === this.meId && !this.localPos) this.localPos = { x: pos.x, z: pos.z };
+      }
+      if (!roaming.has(p.id) && p.id === this.meId) this.localPos = null;
       c.target.copy(pos);
       if (c.fresh) {
         c.group.position.copy(pos);
@@ -1232,7 +1246,9 @@ export class GameScene {
     }
     this.speaking = new Set(view.speakingIds);
     const myZone = view.zones[view.me.id];
-    this.freeRoam = myZone === 'free';
+    this.freeRoam = roaming.has(view.me.id);
+    // 데이트 중인 장소는 대기 인원이 들어가지 못하게 (방해 금지)
+    this.busySpots = [...byZone.keys()].filter((k) => k.startsWith('date:')).map((k) => ZONES[k]).filter(Boolean);
     this.myZone = myZone;
     if (!this.freeRoam) {
       const f = myZone === 'stage' || view.phase === 'selfIntro' ? { x: 0, z: 1.2 } : ZONES[myZone] ?? ZONES.lounge;
@@ -1274,6 +1290,19 @@ export class GameScene {
     this.localPos.x = clamp(this.localPos.x + dx * sp * dt, WORLD.minX, WORLD.maxX);
     this.localPos.z = clamp(this.localPos.z + dz * sp * dt, WORLD.minZ, WORLD.maxZ);
     this.pushOutOfHouses(this.localPos);
+    if (this.phase !== 'freeRoam') {
+      for (const b of this.busySpots ?? []) {
+        const ddx = this.localPos.x - b.x;
+        const ddz = this.localPos.z - b.z;
+        const d = Math.hypot(ddx, ddz);
+        const R = 3.2;
+        if (d < R) {
+          const k = d > 1e-3 ? R / d : 0;
+          this.localPos.x = k ? b.x + ddx * k : b.x + R;
+          this.localPos.z = k ? b.z + ddz * k : b.z;
+        }
+      }
+    }
     const c = this.chars.get(this.meId);
     if (c) c.target.set(this.localPos.x, 0, this.localPos.z);
     return this.localPos;
@@ -1487,6 +1516,16 @@ export class GameScene {
           const a = moving ? Math.sin(w + (1 - i) * Math.PI) * 0.5 : 0;
           b.quaternion.copy(rest).multiply(q.setFromAxisAngle(X, a));
         });
+        if (c.mBadges) {
+          const mb = c.mBadges;
+          const goal = seated ? mb.y + mb.lift : mb.y;
+          const y = mb.nb.front.position.y + (goal - mb.nb.front.position.y) * Math.min(1, dt * 10);
+          const sc = seated ? 0.82 : 1;
+          mb.nb.front.position.set(0, y, mb.fz + (seated ? 0.04 : 0));
+          mb.nb.back.position.set(0, y, mb.bz);
+          mb.nb.front.scale.setScalar(sc);
+          mb.nb.back.scale.setScalar(sc);
+        }
         c.model.position.y = seated ? -0.15 : moving ? Math.abs(Math.sin(w)) * 0.07 : Math.sin(t * 2 + c.phase) * 0.012;
         c.mixer?.update(dt);
       }

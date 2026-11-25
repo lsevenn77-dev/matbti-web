@@ -10,8 +10,8 @@ REPO="https://github.com/lsevenn77-dev/matbti-web.git"
 BRANCH="${BRANCH:-claude/modest-clarke-uuqbr9}"
 DIR="${DIR:-/opt/nasolneosol-src}"
 PORT="${PORT:-8080}"
-TIME_SCALE="${TIME_SCALE:-10}"   # 테스트용 10배속. 실제 시간은 TIME_SCALE=1
-DEV_TOOLS="${DEV_TOOLS:-1}"      # 1 이면 '봇으로 채우기' 버튼 사용 가능
+TIME_SCALE="${TIME_SCALE:-1}"    # 정상 속도. 개발 중 빨리 돌리기는 게임 화면 위 버튼(DEV_TOOLS=1)
+DEV_TOOLS="${DEV_TOOLS:-1}"      # 1 이면 봇 채우기·빨리 돌리기·다음 단계 버튼 사용 가능
 DATA_DIR="${DATA_DIR:-/var/lib/nasolneosol}"
 
 [ "$(id -u)" = "0" ] || { echo "root 로 실행해 줘 (sudo -i 후 다시 실행)"; exit 1; }

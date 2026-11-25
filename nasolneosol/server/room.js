@@ -100,6 +100,25 @@ export class Room {
     if (this.phaseEndsAt != null && t >= this.phaseEndsAt) this.advance();
   }
 
+  /** 개발 도구: 배속 바꾸기. 진행 중인 단계의 남은 시간도 새 배속에 맞춘다 */
+  devSetSpeed(scale) {
+    scale = Math.max(1, Math.min(60, Number(scale) || 1));
+    const t = this.now();
+    const k = this.timeScale / scale;
+    const re = (x) => (x == null ? x : t + Math.max(0, x - t) * k);
+    this.phaseEndsAt = re(this.phaseEndsAt);
+    if (this.pick?.turnEndsAt != null) this.pick.turnEndsAt = re(this.pick.turnEndsAt);
+    if (this.intro) for (const key of ['speakerEndsAt', 'gapUntil']) if (this.intro[key] != null) this.intro[key] = re(this.intro[key]);
+    this.timeScale = scale;
+    this.markDirty();
+  }
+
+  /** 개발 도구: 지금 단계를 끝내고 다음 단계로 */
+  devSkip() {
+    if (this.phase === 'waiting' || this.phase === 'ended') return;
+    this.advance();
+  }
+
   advance() {
     this.exitPhase(this.phase);
     this.enterPhase(this.phaseIndex + 1);
@@ -110,6 +129,7 @@ export class Room {
     this.phase = this.phases[i] ?? 'ended';
     const t = this.now();
     this.phaseStartedAt = t;
+    for (const p of this.participants.values()) p.pos = null; // 단계가 바뀌면 각자 정해진 자리에서 시작
     const d = this.cfg.durations[this.phase];
     this.phaseEndsAt = d != null ? t + this.ms(d) : null;
     const fn = this[`enter_${this.phase}`];
@@ -160,9 +180,7 @@ export class Room {
 
   enter_date1() {}
 
-  enter_freeRoam() {
-    for (const p of this.participants.values()) p.pos = null;
-  }
+  enter_freeRoam() {}
 
   enter_selfIntro(t) {
     const all = [...this.participants.values()];
@@ -481,7 +499,7 @@ export class Room {
   }
 
   act_move(p, { x, z }) {
-    if (this.phase !== 'freeRoam') return fail('자유 구경 시간에만 이동할 수 있다');
+    if (!this.canRoam(p.id)) return fail('지금은 이동할 수 없다');
     if (!Number.isFinite(x) || !Number.isFinite(z)) return fail('잘못된 좌표');
     const t = this.now();
     if (p.lastMoveAt && t - p.lastMoveAt < 80) return { ok: true, silent: true }; // 초당 약 12회 제한
@@ -493,7 +511,7 @@ export class Room {
 
   /** 자유 구경 중 앉기·눕기·일어서기·점프 (연출용, 다른 사람에게 그대로 전달) */
   act_emote(p, { kind, x, z, face, y }) {
-    if (this.phase !== 'freeRoam') return fail('자유 구경 시간에만 할 수 있다');
+    if (!this.canRoam(p.id)) return fail('지금은 할 수 없다');
     if (!['sit', 'lie', 'stand', 'jump'].includes(kind)) return fail('알 수 없는 동작');
     const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
     const ev = { type: 'emote', id: p.id, kind, x: clamp(num(x), WORLD.minX, WORLD.maxX), z: clamp(num(z), WORLD.minZ, WORLD.maxZ), face: num(face), y: clamp(num(y), 0, 1) };
@@ -608,6 +626,12 @@ export class Room {
     return 'lounge';
   }
 
+  /** 자유롭게 걸어다닐 수 있는지: 자유 구경 시간 + 숙소에서 대기 중일 때 (데이트·미니게임에 안 뽑힌 사람) */
+  canRoam(pid) {
+    const z = this.zoneOf(pid);
+    return z === 'free' || (z.startsWith('dorm_') && this.phase !== 'ended');
+  }
+
   partnersOf(pid, rounds) {
     const s = new Set();
     for (const r of rounds) for (const g of this.dates[r]) if (g.members.includes(pid)) for (const m of g.members) if (m !== pid) s.add(m);
@@ -636,9 +660,8 @@ export class Room {
       me: { ...this.publicProfile(pid), private: { age: me.profile.age, job: me.profile.job, region: me.profile.region } },
       participants: [...this.participants.keys()].map((id) => this.publicProfile(id)),
       zones: Object.fromEntries([...this.participants.keys()].map((id) => [id, this.zoneOf(id)])),
-      positions: this.phase === 'freeRoam'
-        ? Object.fromEntries([...this.participants.values()].filter((p) => p.pos).map((p) => [p.id, p.pos]))
-        : {},
+      roaming: [...this.participants.keys()].filter((id) => this.canRoam(id)),
+      positions: Object.fromEntries([...this.participants.values()].filter((p) => p.pos && this.canRoam(p.id)).map((p) => [p.id, p.pos])),
       channels: this.channelsFor(pid),
       voice: this.voicePerms()[pid],
       speakingIds: Object.entries(this.voicePerms()).filter(([, v2]) => v2.publish).map(([k]) => k),

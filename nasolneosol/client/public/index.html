@@ -78,6 +78,10 @@
       <div class="phase-badge" id="phase-badge"><span id="phase-name"></span><span id="timer" class="timer">--:--</span></div>
       <div class="map-wrap"><canvas id="minimap" width="120" height="96"></canvas><div class="count" id="count"></div></div>
     </header>
+    <div id="dev-bar" class="dev-bar" hidden>
+      <button type="button" id="btn-dev-fast">⏩ 빨리 ×10</button>
+      <button type="button" id="btn-dev-skip">⏭ 다음 단계</button>
+    </div>
     <div class="sub-row"><span id="phase-sub"></span><span class="voice-badge" id="voice-badge"></span></div>
     <div id="joystick" class="joystick" hidden><div class="knob" id="knob"></div></div>
     <div id="actions" class="actions" hidden>
@@ -93,7 +97,10 @@
     <div id="intro-stage" class="intro-stage" hidden></div>
     <div id="panel" class="panel"></div>
     <div id="chat" class="chat">
-      <div class="chat-tabs" id="chat-tabs"></div>
+      <div class="chat-head">
+        <div class="chat-tabs" id="chat-tabs"></div>
+        <button type="button" class="chat-toggle" id="btn-chat-toggle" aria-label="채팅 접기">접기 ▾</button>
+      </div>
       <div class="chat-log" id="chat-log"></div>
       <form id="chat-form" class="chat-form">
         <input id="chat-input" maxlength="200" placeholder="텍스트로 대화" autocomplete="off" />
