@@ -66,13 +66,14 @@ export class GameScene {
     this.onTapFloor = onTapFloor;
     // 폰(터치 기기)은 발열·배터리를 위해 해상도·그림자·프레임을 낮춘다
     this.mobile = matchMedia('(pointer: coarse)').matches;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.mobile, powerPreference: this.mobile ? 'low-power' : 'default' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.mobile ? 1.25 : 2));
+    // 화질은 그대로 (해상도·안티에일리어싱·그림자 유지). 폰은 프레임만 30으로 제한해 발열을 줄인다
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = this.mobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 220);
     this.camTarget = new THREE.Vector3(0, 0, 0);
@@ -118,7 +119,7 @@ export class GameScene {
     const sun = new THREE.DirectionalLight('#fff3dd', 2.4);
     sun.position.set(12, 22, 14);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(this.mobile ? 512 : 1024, this.mobile ? 512 : 1024);
+    sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.camera.left = -22;
     sun.shadow.camera.right = 22;
     sun.shadow.camera.top = 22;
