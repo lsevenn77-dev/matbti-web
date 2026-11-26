@@ -1,13 +1,19 @@
 {
-  "_note": "건물·가구·데이트 소품. Higgsfield(GPT Image 2.6 → Meshy 7) 생성 → UV 섬 재배치 → 정리. rot: 모델 회전(도). 정식 서비스 전 R2 로 이전 예정",
+  "_note": "건물·가구·데이트 소품. Higgsfield(GPT Image 2.6 → Meshy 7) 생성 → UV 섬 재배치 → 정리. rot: 모델 회전(도). 정식 서비스 전 R2 로 이전 예정 · 캐릭터·건물은 KTX2(UASTC) 압축 텍스처 + 캐릭터 삼각형 축소 (그래픽 메모리 약 1/4). prevUrl 은 압축 전 원본",
   "house_m": {
-    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/b67f2a3f-ad7f-4474-86d3-f47262c06f72.glb"
+    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/f0bd2b9c-84db-4e73-9dfd-5bb53ddecb9a.glb",
+    "prevUrl": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/b67f2a3f-ad7f-4474-86d3-f47262c06f72.glb",
+    "ktx2": true
   },
   "house_f": {
-    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/c2ba4044-4331-4c44-bdb4-e6f9b1c5d876.glb"
+    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/5de5123d-b988-4148-a7d8-b1e854376003.glb",
+    "prevUrl": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/c2ba4044-4331-4c44-bdb4-e6f9b1c5d876.glb",
+    "ktx2": true
   },
   "lounge": {
-    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/7fbf2a1d-f3f8-499c-9c1d-db33fef5dd0c.glb"
+    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/a56c1af2-25f2-4056-af51-bd430d2d2822.glb",
+    "prevUrl": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/7fbf2a1d-f3f8-499c-9c1d-db33fef5dd0c.glb",
+    "ktx2": true
   },
   "bed": {
     "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3HuPGDpm8vCWMrvlGavdfxlX6I9/e65c3dec-18ca-421e-a754-fd54cd296c2a.glb"
