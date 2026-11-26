@@ -87,7 +87,37 @@ function showSignup(editing = false) {
     f.querySelector('button').textContent = '저장';
   }
   if (st.info) f.age.min = st.info.minAge;
+  if (!editing) restoreDraft();
 }
+
+// 가입 입력 임시 저장: 사진 고르는 사이 폰 브라우저가 페이지를 다시 불러와도 입력이 남게
+const DRAFT_KEY = 'nsns_signup_draft';
+function saveDraft() {
+  const f = $('#signup-form');
+  if (f.dataset.editing === '1') return;
+  const d = { gender: f.gender.value, age: f.age.value, job: f.job.value, region: f.region.value, photo: photoData };
+  try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {
+    try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, photo: null })); } catch {}
+  }
+}
+function restoreDraft() {
+  let d = null;
+  try { d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null'); } catch {}
+  if (!d) return;
+  const f = $('#signup-form');
+  for (const r of f.gender) r.checked = r.value === d.gender;
+  if (d.age) f.age.value = d.age;
+  if (d.job) f.job.value = d.job;
+  if (d.region) f.region.value = d.region;
+  if (d.photo) {
+    photoData = d.photo;
+    $('#photo-preview').src = d.photo;
+    $('#photo-preview').hidden = false;
+    $('#photo-hint').hidden = true;
+  }
+}
+$('#signup-form').addEventListener('input', saveDraft);
+$('#signup-form').addEventListener('change', saveDraft);
 
 $('#photo-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -96,6 +126,7 @@ $('#photo-input').addEventListener('change', async (e) => {
   $('#photo-preview').src = photoData;
   $('#photo-preview').hidden = false;
   $('#photo-hint').hidden = true;
+  saveDraft();
 });
 
 async function resizePhoto(file, max) {
@@ -123,6 +154,7 @@ $('#signup-form').addEventListener('submit', async (e) => {
   const j = await r.json();
   if (!r.ok) return ($('#signup-error').textContent = j.error);
   if (!editing) {
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch {}
     st.token = j.token;
     safeSet('nsns_token', j.token);
     st.me = j.me;
@@ -137,6 +169,11 @@ $('#signup-form').addEventListener('submit', async (e) => {
 // ───────────── 대기 ─────────────
 function showLobby(status) {
   show('screen-lobby');
+  // 가입 중에 미뤄 둔 새 버전은 대기 화면에서 적용
+  if (st.pendingUpdate?.waiting && !st.view) {
+    st.pendingUpdate.waiting.postMessage('skipWaiting');
+    st.pendingUpdate = null;
+  }
   $('#lobby-photo').src = st.me.profile.photoUrl;
   const p = st.me.profile;
   $('#lobby-me').textContent = `${G[p.gender]} · ${p.age}세 · ${p.job} · ${p.region}`;
@@ -920,15 +957,17 @@ function registerSW() {
   // 게임 중이 아니면(가입·대기 화면) 새 버전을 바로 적용한다. 게임 중이면 끝난 뒤 적용.
   const applyIfIdle = (reg) => {
     if (!reg.waiting) return;
-    if (st.view && st.view.phase !== 'ended') {
-      $('#update-bar').hidden = false;
+    if ((st.view && st.view.phase !== 'ended') || !$('#screen-signup').hidden) {
+      // 게임 중이거나 가입 입력 중이면 새로고침하지 않고 나중에 적용
+      if (st.view) $('#update-bar').hidden = false;
+      st.pendingUpdate = reg;
       return;
     }
     reg.waiting.postMessage('skipWaiting');
   };
   let reloading = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloading || (st.view && st.view.phase !== 'ended')) return;
+    if (reloading || (st.view && st.view.phase !== 'ended') || !$('#screen-signup').hidden) return;
     reloading = true;
     location.reload();
   });
