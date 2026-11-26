@@ -186,6 +186,28 @@ export class Relations {
     this.persist();
   }
 
+  /** 회원 탈퇴: 이 사람이 들어 있는 관계·대화를 모두 지운다 */
+  forget(userId) {
+    this.met.delete(userId);
+    for (const m of this.met.values()) m.delete(userId);
+    this.matches.delete(userId);
+    for (const [k, list] of this.matches) this.matches.set(k, list.filter((x) => x.partnerId !== userId));
+    this.friends.delete(userId);
+    for (const s of this.friends.values()) s.delete(userId);
+    this.requests.delete(userId);
+    for (const m of this.requests.values()) m.delete(userId);
+    this.blocks.delete(userId);
+    for (const s of this.blocks.values()) s.delete(userId);
+    for (const key of [...this.threads.keys()]) {
+      if (key.split('|').includes(userId)) this.threads.delete(key);
+    }
+    for (const key of [...this.readAt.keys()]) {
+      if (key.startsWith(`${userId}>`) || key.split('>')[1].split('|').includes(userId)) this.readAt.delete(key);
+    }
+    this.lastSent.delete(userId);
+    this.persist();
+  }
+
   // ───────── 메시지 ─────────
   send(from, to, text) {
     const t = String(text ?? '').replace(/\s+$/u, '').replace(/^\s+/u, '');

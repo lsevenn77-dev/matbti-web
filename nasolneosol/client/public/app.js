@@ -1,6 +1,6 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=23';
-import { AudioDirector } from './audio.js?v=23';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=24';
+import { AudioDirector } from './audio.js?v=24';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -229,6 +229,7 @@ function showLobby(status) {
   $('#lobby-name').textContent = `${G[p.gender]} · ${p.age}세`;
   $('#lobby-me').textContent = `${p.job} · ${p.region} · ${range}`;
   $('#btn-edit-2').hidden = false;
+  $('#btn-delete-account').hidden = false;
   if (status) {
     $('#q-male').textContent = status.male;
     $('#q-female').textContent = status.female;
@@ -408,7 +409,7 @@ function renderSocial() {
   } else if (soc.mode === 'friends' && soc.sub === 'met') {
     html = d.met.length
       ? `<p class="hint">같은 게임에서 만난 사람에게만 친구 신청을 할 수 있어.</p>` + d.met.map((c) => personRow(c,
-        c.friend ? '<span class="tag">친구</span>' : c.requested ? '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>' : '<button type="button" class="pill-btn pk" data-act="request">친구 신청</button>',
+        (c.friend ? '<span class="tag">친구</span>' : c.requested ? '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>' : '<button type="button" class="pill-btn pk" data-act="request">친구 신청</button>') + '<button type="button" class="ic sm" data-act="report" aria-label="신고" title="신고">🚨</button>',
         `<span class="st">${dateLabel(c.at)} 함께함</span>`)).join('')
       : '<p class="empty">아직 함께한 사람이 없어. 게임을 한 판 하면 여기에 나와.</p>';
   } else if (soc.mode === 'matches') {
@@ -432,6 +433,10 @@ function bindPeople(root, rowOpensChat = false) {
       b.onclick = async (e) => {
         e.stopPropagation();
         const act = b.dataset.act;
+        if (act === 'report') {
+          const who = [...(soc.data?.met ?? []), ...(soc.data?.friends ?? [])].find((x) => x.id === id);
+          return openReport({ userId: id, context: 'met', name: who?.alias });
+        }
         if (act === 'chat') {
           if ($('#modal-social').hidden) openSocial('messages');
           return openDm(id);
@@ -537,6 +542,82 @@ function onDm(m) {
     if (!m.message.mine && !st.view) toastLobby('💬 새 메시지가 왔어');
   }
 }
+// ───────────── 신고 ─────────────
+const REPORT_REASONS = {
+  abuse: '욕설·비하·괴롭힘',
+  sexual: '성적인 말이나 사진',
+  contact: '원치 않는 연락처·만남 요구',
+  fake: '사칭·허위 프로필',
+  spam: '스팸·홍보·금전 요구',
+  minor: '미성년자로 보임',
+  other: '기타',
+};
+let reportCtx = null;
+function openReport(ctx) {
+  reportCtx = ctx;
+  $('#rp-who').textContent = ctx.name ? `${ctx.name}님을 신고해요` : '신고하기';
+  $('#rp-reasons').innerHTML = Object.entries(REPORT_REASONS).map(([k, l]) => `<label><input type="radio" name="rp-reason" value="${k}" /> ${esc(l)}</label>`).join('');
+  $('#rp-detail').value = '';
+  $('#rp-block-row').hidden = ctx.context === 'game';
+  $('#rp-block').checked = ctx.context === 'dm';
+  $('#rp-note').textContent = ctx.context === 'dm' ? '최근 대화 내용이 함께 전달돼.' : ctx.context === 'game' ? '이번 게임에서 이 사람이 쓴 채팅이 함께 전달돼.' : '';
+  // 게임 화면에서는 게임 위에 띄운다
+  $('#modal-report').hidden = false;
+}
+$('#rp-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const reason = new FormData(e.target).get('rp-reason');
+  if (!reason) return toastAny('신고 사유를 골라 줘');
+  const ctx = reportCtx;
+  const body = { reason, detail: $('#rp-detail').value, context: ctx.context, ...(ctx.pid ? { pid: ctx.pid } : { userId: ctx.userId }) };
+  try {
+    await api('/api/report', body);
+    if (!$('#rp-block-row').hidden && $('#rp-block').checked && ctx.userId) {
+      await api('/api/block', { userId: ctx.userId });
+      if (soc.dmWith === ctx.userId) closeDm();
+      await loadSocial();
+      renderSocial();
+    }
+    $('#modal-report').hidden = true;
+    toastAny('신고가 접수됐어. 운영팀이 확인할게.');
+  } catch (err) {
+    toastAny(err.message);
+  }
+});
+$('#rp-cancel').addEventListener('click', () => ($('#modal-report').hidden = true));
+$('#dm-report').addEventListener('click', () => {
+  if (soc.dmWith) openReport({ userId: soc.dmWith, context: 'dm', name: $('#dm-name').textContent.split(' · ')[0] });
+});
+/** 게임 중이면 게임 토스트, 아니면 로비 토스트 */
+function toastAny(t) {
+  if (st.view && !$('#screen-game').hidden) toast(t);
+  else toastLobby(t);
+}
+
+// ───────────── 회원 탈퇴 ─────────────
+$('#btn-delete-account').addEventListener('click', async () => {
+  const w = st.me?.wallet;
+  const paid = w ? (w.tickets > 0 ? `\n· 남은 유료 입장권 ${w.tickets}장` : '') + (w.subActive ? '\n· 남은 월정액 기간' : '') : '';
+  const msg = `정말 탈퇴할까?\n\n지워지는 것: 프로필·사진, 친구, 1:1 대화, 함께한 기록, 계정 연결${paid ? `\n\n⚠️ 아래 남은 이용권도 사라져. 환불을 원하면 탈퇴 전에 고객센터로 먼저 요청해 줘.${paid}` : ''}\n\n결제 기록은 법에 따라 5년 동안 따로 보관돼.\n\n탈퇴하려면 "탈퇴"라고 입력해 줘.`;
+  const v = prompt(msg);
+  if (v === null) return;
+  if (v.trim() !== '탈퇴') return toastLobby('입력이 달라서 취소했어');
+  try {
+    await api('/api/me/delete', { confirm: '탈퇴' });
+  } catch (err) {
+    return toastLobby(err.message);
+  }
+  st.deleted = true;
+  safeSet('nsns_token', null);
+  st.token = null;
+  st.me = null;
+  try { st.ws?.close(); } catch {}
+  soc.data = null;
+  renderSocialBadges();
+  showStart();
+  toastLobby('탈퇴가 끝났어. 그동안 고마웠어.');
+});
+
 // ───────────── 동반 입장 (같은 성별 친구, 본인 포함 2명) ─────────────
 st.party = { party: null, invite: null, sent: [] };
 function onParty(m) {
@@ -800,6 +881,7 @@ function connect() {
   };
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
   ws.onclose = (e) => {
+    if (st.deleted || e.code === 4004) return; // 탈퇴한 계정: 다시 연결하지 않는다
     if (e.code === 4003) {
       safeSet('nsns_token', null);
       location.reload();
@@ -1490,9 +1572,10 @@ function openProfile(pid) {
     ? `<dl><dt>나이</dt><dd>${p.age}세</dd><dt>직업</dt><dd>${esc(p.job)}</dd><dt>사는 곳</dt><dd>${esc(p.region)}</dd></dl>`
     : '<p class="muted small">나이·직업·사는 곳은 자기소개 후 공개돼.</p>';
   card.innerHTML = `<div class="top"><img src="${esc(p.photoUrl)}" alt="${esc(p.alias)} 프로필 사진" /><div><div class="strong">${esc(p.alias)}${p.id === st.view.me.id ? ' (나)' : ''}</div><div class="muted small">${G[p.gender]}${p.connected ? '' : ' · 연결 끊김'}</div></div>
-    <button class="btn small" style="margin-left:auto" id="btn-close-card">닫기</button></div>${facts}`;
+    <button class="btn small" style="margin-left:auto" id="btn-close-card">닫기</button></div>${facts}${p.id === st.view.me.id ? '' : '<button type="button" class="report-link" id="btn-report-card">🚨 신고하기</button>'}`;
   card.hidden = false;
   $('#btn-close-card').onclick = () => (card.hidden = true);
+  $('#btn-report-card')?.addEventListener('click', () => openReport({ pid, context: 'game', name: p.alias }));
 }
 
 function tapFloor(x, z) {

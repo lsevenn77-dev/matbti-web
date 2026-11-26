@@ -24,6 +24,7 @@ import { PRODUCTS, entryStatus, canEnter, consumeEntry, grantProduct } from './w
 import { socialConfig, verifyGoogle, verifyApple, verifyKakaoCode, kakaoAuthorizeUrl, SocialAuthError } from './social.js';
 import { payConfig, newOrderId, niceApprove } from './payments.js';
 import { Relations, RelationError } from './relations.js';
+import { Reports, ReportError, REPORT_REASONS } from './reports.js';
 import { randomBytes } from 'node:crypto';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,6 +43,7 @@ export function createServer(opts = {}) {
   const store = new FileStore(opts.dataDir === null ? null : path.resolve(env.DATA_DIR || path.join(ROOT, 'data')));
   const voice = new MockVoiceAdapter({ log: env.VOICE_LOG === '1' });
   const relations = new Relations(store.dir);
+  const reports = new Reports(store.dir);
 
   const social = socialConfig(env);
   const pay = payConfig(env);
@@ -473,12 +475,65 @@ export function createServer(opts = {}) {
         const body = await readBody(req);
         const patch = validateProfile(body, { minAge: config.minAge, partial: true });
         if (patch.gender && patch.gender !== u.profile.gender) leaveQueue(u.id);
+        const oldPhoto = u.profile.photoUrl;
         if (body.photo) patch.photoUrl = store.savePhoto(...Object.values(decodeDataUrl(body.photo)));
         store.updateProfile(u.id, patch);
+        if (patch.photoUrl && oldPhoto !== patch.photoUrl) store.deletePhoto(oldPhoto); // 예전 사진은 남기지 않는다
         // 나이 조건이 바뀌면 대기열 매칭을 다시 본다
         tryFormRoom();
         broadcastQueue();
         return json(res, 200, meResponse(u));
+      }
+      // ── 신고 ──
+      if (p === '/api/report' && req.method === 'POST') {
+        const u = authUser(req);
+        if (!u) return json(res, 401, { error: '로그인이 필요하다' });
+        const body = await readBody(req, 8 * 1024);
+        let target = String(body.userId ?? '');
+        let roomId = null;
+        let evidence = null;
+        const context = ['dm', 'met', 'game'].includes(body.context) ? body.context : 'other';
+        if (body.pid) {
+          // 게임 중 신고: 같은 방 참가자 번호로 받는다 (상대 회원 ID 는 화면에 없다)
+          roomId = userRoom.get(u.id) ?? null;
+          const entry = roomId && rooms.get(roomId);
+          const tp = entry?.room.participants.get(String(body.pid));
+          if (!tp) return json(res, 404, { error: '신고할 참가자를 찾을 수 없어' });
+          target = tp.userId;
+          evidence = { alias: tp.alias, chat: entry.room.chat.filter((m) => m.from === tp.id).slice(-30).map((m) => ({ channel: m.channel, text: m.text, at: m.at })) };
+        } else if (context === 'dm') {
+          evidence = { messages: relations.history(u.id, target, { markRead: false }).slice(-30).map((m) => ({ from: m.from === u.id ? 'reporter' : 'target', text: m.text, at: m.at })) };
+        }
+        if (!store.get(target)) return json(res, 404, { error: '신고할 상대를 찾을 수 없어' });
+        if (!body.pid && !relations.hasMet(u.id, target) && !relations.areFriends(u.id, target)) return json(res, 403, { error: '함께한 적 있는 사람만 신고할 수 있어' });
+        try {
+          const r = reports.add({ reporter: u.id, target, reason: String(body.reason ?? ''), detail: body.detail ?? '', context, roomId, evidence });
+          return json(res, 200, { ok: true, id: r.id });
+        } catch (e) {
+          if (e instanceof ReportError) return json(res, 400, { error: e.message });
+          throw e;
+        }
+      }
+      if (p === '/api/report/reasons' && req.method === 'GET') return json(res, 200, REPORT_REASONS);
+      // ── 회원 탈퇴 ──
+      if (p === '/api/me/delete' && req.method === 'POST') {
+        const u = authUser(req);
+        if (!u) return json(res, 401, { error: '로그인이 필요하다' });
+        const body = await readBody(req, 4 * 1024);
+        if (body.confirm !== '탈퇴') return json(res, 400, { error: '확인 문구가 맞지 않아' });
+        if (userRoom.has(u.id)) return json(res, 409, { error: '게임 중에는 탈퇴할 수 없어. 게임이 끝난 뒤 다시 해 줘' });
+        leaveQueue(u.id);
+        leaveParty(u.id);
+        partyInvites.delete(u.id);
+        for (const [to, v] of partyInvites) if (v.from === u.id) { partyInvites.delete(to); sendParty(to); }
+        const touched = new Set([...(relations.friends.get(u.id) ?? []), ...relations.threadsOf(u.id).map((t) => t.userId)]);
+        relations.forget(u.id);
+        store.deleteUser(u.id);
+        for (const id of touched) send(id, { t: 'social' });
+        for (const ws of sockets.get(u.id) ?? []) ws.close(4004, 'deleted');
+        sockets.delete(u.id);
+        console.log(`[account] 탈퇴 ${u.id.slice(0, 8)}`);
+        return json(res, 200, { ok: true });
       }
       // ── 친구 · 나의 인연 · 메시지 ──
       if (p.startsWith('/api/social') || p.startsWith('/api/friends') || p.startsWith('/api/messages') || p === '/api/block') {
@@ -835,6 +890,7 @@ export function createServer(opts = {}) {
     rooms,
     store,
     rel: relations,
+    reports,
     voice,
     config,
     listen(port) {

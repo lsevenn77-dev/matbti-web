@@ -652,3 +652,18 @@ body[data-screen="screen-start"] .topbar { background: transparent; border: 0; b
 @media (max-width: 760px) {
   .party-invite { top: calc(100px + var(--safe-t)); }
 }
+
+/* ── 신고 · 회원 탈퇴 ── */
+.top-modal { z-index: 70; }
+.rp-reasons { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
+.rp-reasons label { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid #f3d3df; border-radius: 12px; background: #fff; color: var(--plum); font-size: 14px; cursor: pointer; }
+.rp-reasons label:has(input:checked) { border-color: var(--pk); background: var(--pk-soft); font-weight: 700; }
+#rp-detail { width: 100%; border: 1px solid #f0cfdc; border-radius: 12px; padding: 10px; font: inherit; font-size: 15px; resize: vertical; color: var(--plum); }
+.rp-block { display: flex !important; gap: 8px; align-items: flex-start; font-size: 13px !important; color: var(--plum) !important; margin: 8px 0 !important; }
+.rp-block[hidden] { display: none !important; }
+.rp-send { background: linear-gradient(180deg, #ff8a8a, #e0455a) !important; border: 0 !important; }
+.report-link { display: block; margin: 10px 0 0 auto; border: 0; background: none; color: #c4314f; font: inherit; font-size: 13px; cursor: pointer; }
+.ic.sm { width: 30px; height: 30px; font-size: 13px; opacity: .7; }
+.danger-link { display: block; margin: 16px auto 0; border: 0; background: none; color: #b0475d; font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
+.danger-link[hidden] { display: none; }
+.rp-block input { width: auto !important; display: inline-block !important; margin: 2px 0 0 !important; padding: 0 !important; flex: none; accent-color: var(--pk); }

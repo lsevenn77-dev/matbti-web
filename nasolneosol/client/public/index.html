@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="나솔너솔" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <link rel="stylesheet" href="/style.css?v=23" />
+  <link rel="stylesheet" href="/style.css?v=24" />
   <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three-addons/" } }</script>
 </head>
 <body>
@@ -226,6 +226,7 @@
         </div>
         <div class="dm-menu" id="dm-menu" hidden>
           <button type="button" id="dm-unfriend">친구 끊기</button>
+          <button type="button" id="dm-report" class="danger">🚨 신고하기</button>
           <button type="button" id="dm-block" class="danger">차단하기</button>
         </div>
         <div class="dm-log" id="dm-log"></div>
@@ -260,6 +261,19 @@
       <div class="set-row"><span>배경음악</span><button type="button" class="btn small" id="btn-sound-settings">끄기</button></div>
       <button type="button" class="btn" id="btn-edit-2" hidden>프로필 수정</button>
       <nav class="set-links"><a href="/terms.html">이용약관</a><a href="/privacy.html">개인정보처리방침</a><a href="/refund.html">환불정책</a></nav>
+      <button type="button" class="danger-link" id="btn-delete-account" hidden>회원 탈퇴</button>
+    </div>
+  </div>
+  <div class="modal top-modal" id="modal-report" hidden>
+    <div class="modal-card narrow-modal">
+      <h2>🚨 <span id="rp-who">신고하기</span></h2>
+      <form id="rp-form">
+        <div class="rp-reasons" id="rp-reasons"></div>
+        <textarea id="rp-detail" maxlength="500" rows="3" placeholder="자세한 내용 (선택)"></textarea>
+        <label class="rp-block" id="rp-block-row"><input type="checkbox" id="rp-block" /> 이 사람 차단하기 (서로 메시지·친구 신청을 못 보내고 목록에서 사라져)</label>
+        <p class="tiny muted" id="rp-note"></p>
+        <div class="row"><button type="button" class="btn" id="rp-cancel">취소</button><button type="submit" class="btn primary rp-send">신고하기</button></div>
+      </form>
     </div>
   </div>
 
@@ -306,7 +320,7 @@
 
   <div id="update-bar" class="update-bar" hidden>새 버전이 있어. 게임이 끝난 뒤 새로고침하면 적용돼.</div>
 
-  <script type="module" src="/app.js?v=23"></script>
+  <script type="module" src="/app.js?v=24"></script>
   <script type="module" src="/legal/business.js?v=2"></script>
 </body>
 </html>

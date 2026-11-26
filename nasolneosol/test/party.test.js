@@ -37,6 +37,49 @@ test('일행 중 한 명이라도 나이 조건이 안 맞으면 일행 전체�
   assert.equal(need.male, 4);
 });
 
+test('WS: 동반 입장한 두 사람은 봇을 채워 시작한 같은 방에 들어간다', async () => {
+  const app = createServer({ dataDir: null, env: { DEV_TOOLS: '1' } });
+  const port = await app.listen(0);
+  const mk = (gender, age) => app.store.createUser({ gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
+  const a = mk('male', 30);
+  const b = mk('male', 31);
+  const early = mk('male', 33); // 일행보다 먼저 와서 기다리는 남자 1명
+  app.rel.recordGame({ roomId: 'r', people: [a, b].map((u) => ({ userId: u.id, alias: u.id.slice(0, 4) })), couples: [] });
+  app.rel.request(a.id, b.id);
+  app.rel.respond(b.id, a.id, true);
+  const open = (u) => new Promise((res) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    ws.msgs = [];
+    ws.on('message', (d) => ws.msgs.push(JSON.parse(d)));
+    ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', token: u.token })));
+    const t = setInterval(() => { if (ws.msgs.some((m) => m.t === 'welcome')) { clearInterval(t); res(ws); } }, 10);
+  });
+  const wait = (ms = 100) => new Promise((r) => setTimeout(r, ms));
+  const we = await open(early);
+  const wa = await open(a);
+  const wb = await open(b);
+  try {
+    we.send(JSON.stringify({ t: 'queue.join' }));
+    wa.send(JSON.stringify({ t: 'party.invite', to: b.id }));
+    await wait();
+    wb.send(JSON.stringify({ t: 'party.respond', accept: true }));
+    await wait();
+    wb.send(JSON.stringify({ t: 'queue.join' })); // 초대받은 쪽이 눌러도 둘 다 들어간다
+    await wait();
+    const r = await fetch(`http://127.0.0.1:${port}/api/dev/fill-bots`, { method: 'POST' });
+    assert.equal(r.status, 200);
+    await wait(300);
+    assert.equal(app.rooms.size, 1);
+    const [{ room }] = [...app.rooms.values()];
+    const users = [...room.participants.values()].map((p) => p.userId);
+    assert.ok(users.includes(a.id) && users.includes(b.id) && users.includes(early.id));
+    assert.equal(users.length, 12);
+  } finally {
+    for (const w of [we, wa, wb]) w.close();
+    app.close();
+  }
+});
+
 test('WS: 같은 성별 친구 초대 → 수락 → 함께 대기 → 한 명이 취소하면 둘 다 빠짐', async () => {
   const app = createServer({ dataDir: null, env: { DEV_TOOLS: '0' } });
   const port = await app.listen(0);

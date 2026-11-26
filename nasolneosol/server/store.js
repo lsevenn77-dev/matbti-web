@@ -103,6 +103,26 @@ export class FileStore {
     return u;
   }
 
+  /** 사진 파일 지우기 (프로필 사진 교체·탈퇴) */
+  deletePhoto(photoUrl) {
+    const photoId = /^\/photos\/([0-9a-f]{32})$/.exec(photoUrl ?? '')?.[1];
+    if (!photoId) return;
+    this.photos.delete(photoId);
+    if (this.dir) fs.rmSync(path.join(this.dir, 'photos', photoId), { force: true });
+  }
+
+  /** 회원 탈퇴: 회원 정보·로그인 연결·프로필 사진을 지운다. 결제 기록(orders)은 법정 보관 기간 동안 남긴다 */
+  deleteUser(id) {
+    const u = this.users.get(id);
+    if (!u) return false;
+    this.tokens.delete(u.token);
+    for (const k of u.identities ?? []) this.identities.delete(k);
+    this.deletePhoto(u.profile?.photoUrl);
+    this.users.delete(id);
+    this.persist();
+    return true;
+  }
+
   /** @returns {string} photoUrl */
   savePhoto(buf, mime) {
     if (buf.length > MAX_PHOTO_BYTES) throw new Error('사진 용량이 너무 크다');
