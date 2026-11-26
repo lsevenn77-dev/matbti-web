@@ -16,6 +16,8 @@ export class FileStore {
     this.users = new Map(); // userId → user
     this.tokens = new Map(); // token → userId
     this.photos = new Map(); // photoId → { buf, mime }
+    this.identities = new Map(); // 'google:sub' → userId (간편 로그인 연결)
+    this.orders = new Map(); // orderId → 주문
     if (dir) {
       fs.mkdirSync(path.join(dir, 'photos'), { recursive: true });
       fs.mkdirSync(path.join(dir, 'games'), { recursive: true });
@@ -25,17 +27,54 @@ export class FileStore {
 
   load() {
     const f = path.join(this.dir, 'users.json');
-    if (!fs.existsSync(f)) return;
-    for (const u of JSON.parse(fs.readFileSync(f, 'utf8'))) {
-      this.users.set(u.id, u);
-      this.tokens.set(u.token, u.id);
+    if (fs.existsSync(f)) {
+      for (const u of JSON.parse(fs.readFileSync(f, 'utf8'))) {
+        this.users.set(u.id, u);
+        this.tokens.set(u.token, u.id);
+        for (const k of u.identities ?? []) this.identities.set(k, u.id);
+      }
     }
+    const o = path.join(this.dir, 'orders.json');
+    if (fs.existsSync(o)) for (const x of JSON.parse(fs.readFileSync(o, 'utf8'))) this.orders.set(x.orderId, x);
   }
 
   persist() {
     if (!this.dir) return;
     const real = [...this.users.values()].filter((u) => !u.isBot);
-    fs.writeFileSync(path.join(this.dir, 'users.json'), JSON.stringify(real, null, 1));
+    // 쓰다가 꺼져도 파일이 깨지지 않게: 임시 파일에 쓰고 바꿔치기
+    const f = path.join(this.dir, 'users.json');
+    fs.writeFileSync(f + '.tmp', JSON.stringify(real, null, 1));
+    fs.renameSync(f + '.tmp', f);
+  }
+
+  persistOrders() {
+    if (!this.dir) return;
+    const f = path.join(this.dir, 'orders.json');
+    fs.writeFileSync(f + '.tmp', JSON.stringify([...this.orders.values()], null, 1));
+    fs.renameSync(f + '.tmp', f);
+  }
+
+  /** 간편 로그인 계정 → 회원 */
+  byIdentity(provider, sub) {
+    const id = this.identities.get(`${provider}:${sub}`);
+    return id ? this.users.get(id) : null;
+  }
+
+  linkIdentity(userId, provider, sub) {
+    const key = `${provider}:${sub}`;
+    const owner = this.identities.get(key);
+    if (owner && owner !== userId) throw new Error('이 계정은 이미 다른 프로필에 연결돼 있어');
+    const u = this.users.get(userId);
+    u.identities = [...new Set([...(u.identities ?? []), key])];
+    this.identities.set(key, userId);
+    this.persist();
+    return u;
+  }
+
+  saveOrder(order) {
+    this.orders.set(order.orderId, order);
+    this.persistOrders();
+    return order;
   }
 
   createUser(profile, { isBot = false } = {}) {

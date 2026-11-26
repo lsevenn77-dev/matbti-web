@@ -59,6 +59,16 @@ async function boot() {
   registerSW();
   setupInstall();
   st.info = await fetch('/api/info').then((r) => r.json()).catch(() => null);
+  initSocial();
+  // 카카오 로그인·결제에서 돌아온 경우
+  const qs = new URLSearchParams(location.search);
+  if (qs.has('auth') || qs.has('pay')) history.replaceState(null, '', '/');
+  if (qs.has('auth')) {
+    const r = await fetch('/api/auth/result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: qs.get('auth') }) }).catch(() => null);
+    const j = r ? await r.json().catch(() => ({})) : {};
+    if (await handleAuth(r?.ok, j)) return;
+  }
+  if (qs.has('pay')) st.payResult = qs.get('pay');
   if (st.token) {
     const r = await fetch('/api/me', { headers: { Authorization: `Bearer ${st.token}` } }).catch(() => null);
     if (r?.ok) {
@@ -162,6 +172,7 @@ $('#signup-form').addEventListener('submit', async (e) => {
   const f = e.target;
   const editing = f.dataset.editing === '1';
   const body = { gender: f.gender.value, age: Number(f.age.value), job: f.job.value, region: f.region.value, ageUp: Number(f.ageUp.value), ageDown: Number(f.ageDown.value) };
+  if (st.signupTicket && !editing) body.signupTicket = st.signupTicket;
   if (photoData) body.photo = photoData;
   if (!editing && !photoData) return ($('#signup-error').textContent = '프로필 사진을 선택해 줘');
   const r = await fetch(editing ? '/api/me' : '/api/signup', {
@@ -172,6 +183,7 @@ $('#signup-form').addEventListener('submit', async (e) => {
   const j = await r.json();
   if (!r.ok) return ($('#signup-error').textContent = j.error);
   if (!editing) {
+    st.signupTicket = null;
     try { localStorage.removeItem(DRAFT_KEY); } catch {}
     st.token = j.token;
     safeSet('nsns_token', j.token);
@@ -217,6 +229,23 @@ function showLobby(status) {
       $('#queue-msg').textContent = need <= 0 ? `${G[mine]} 자리는 다 찼어. 대기하면 다음 방에 들어가.` : '12명이 모이면 바로 시작해. (선착순 · 나이 조건이 서로 맞는 사람끼리)';
     }
   }
+  renderWallet();
+  renderAccount();
+  // 입장권은 방이 시작될 때 줄어드니 대기 화면에 올 때마다 새로 받아 온다
+  if (!st.meFetchedAt || Date.now() - st.meFetchedAt > 5000) {
+    st.meFetchedAt = Date.now();
+    fetch('/api/me', { headers: authHeaders() }).then((r) => (r.ok ? r.json() : null)).then((me) => {
+      if (!me) return;
+      st.me = me;
+      renderWallet();
+      renderAccount();
+    }).catch(() => {});
+  }
+  if (st.payResult) {
+    const r = st.payResult;
+    st.payResult = null;
+    $('#shop-note').textContent = r === 'ok' ? '✅ 결제 완료! 입장권이 들어왔어.' : r === 'cancel' ? '결제를 취소했어.' : '결제에 실패했어. 잠시 뒤 다시 시도해 줘.';
+  }
   $('#btn-bots').hidden = !st.info?.devTools;
   if (st.info) {
     $('#lobby-info').textContent = `이번 설정: 데이트 ${st.info.dateRounds}회 · 예상 약 ${Math.round(st.info.estimateMinutes)}분${st.info.timeScale !== 1 ? ` (개발 배속 ×${st.info.timeScale})` : ''} · 음성: 모의 구현`;
@@ -231,6 +260,159 @@ $('#btn-bots').addEventListener('click', async () => {
 
 $('#btn-dev-fast').addEventListener('click', () => sendWs({ t: 'dev', op: 'speed', scale: st.view?.timeScale > 1 ? 1 : 10 }));
 $('#btn-dev-skip').addEventListener('click', () => sendWs({ t: 'dev', op: 'skip' }));
+
+// ───────────── 간편 로그인 (구글 · 카카오 · 애플) ─────────────
+function loadScript(src) {
+  return new Promise((ok, bad) => {
+    if (document.querySelector(`script[src="${src}"]`)) return ok();
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = ok;
+    el.onerror = bad;
+    document.head.appendChild(el);
+  });
+}
+function authHeaders() {
+  return st.token ? { Authorization: `Bearer ${st.token}` } : {};
+}
+const PROVIDER = { google: '구글', kakao: '카카오', apple: 'Apple' };
+/** 서버 응답 처리. 화면을 바꿨으면 true */
+async function handleAuth(ok, j) {
+  if (!ok) {
+    const msg = j?.error || '로그인에 실패했어';
+    if (st.me) $('#account-state').textContent = msg;
+    else $('#social-msg').textContent = msg;
+    return false;
+  }
+  if (j.token) {
+    st.token = j.token;
+    safeSet('nsns_token', j.token);
+    st.me = j.me;
+    if (j.linked) {
+      renderAccount();
+      $('#account-state').textContent = '연결됐어! 이제 다른 기기에서도 이 계정으로 들어올 수 있어.';
+      return true;
+    }
+    connect();
+    return true;
+  }
+  if (j.signupTicket) {
+    st.signupTicket = j.signupTicket;
+    showSignup();
+    $('#social-box').classList.add('ok');
+    $('#social-msg').textContent = `✅ ${PROVIDER[j.provider] ?? ''} 계정 확인됨. 아래 프로필만 입력하면 가입 끝!`;
+    return true;
+  }
+  return false;
+}
+async function postAuth(provider, credential) {
+  const r = await fetch(`/api/auth/${provider}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ credential }) }).catch(() => null);
+  return handleAuth(r?.ok, r ? await r.json().catch(() => ({})) : {});
+}
+async function startKakao() {
+  const r = await fetch('/api/auth/kakao/start', { method: 'POST', headers: authHeaders() }).catch(() => null);
+  const j = r ? await r.json().catch(() => ({})) : {};
+  if (j.url) location.href = j.url;
+  else handleAuth(false, j);
+}
+async function startApple() {
+  try {
+    await loadScript('https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/ko_KR/appleid.auth.js');
+    window.AppleID.auth.init({ clientId: st.info.auth.apple, scope: '', redirectURI: `${location.origin}/`, usePopup: true });
+    const r = await window.AppleID.auth.signIn();
+    await postAuth('apple', r.authorization.id_token);
+  } catch (e) {
+    if (e?.error !== 'popup_closed_by_user') handleAuth(false, { error: 'Apple 로그인에 실패했어' });
+  }
+}
+async function initSocial() {
+  const a = st.info?.auth;
+  if (!a || !(a.google || a.kakao || a.apple)) {
+    $('#account-box').hidden = true;
+    return;
+  }
+  $('#social-box').hidden = false;
+  for (const id of ['#btn-kakao', '#btn-kakao-link']) {
+    $(id).hidden = !a.kakao;
+    $(id).onclick = startKakao;
+  }
+  for (const id of ['#btn-apple', '#btn-apple-link']) {
+    $(id).hidden = !a.apple;
+    $(id).onclick = startApple;
+  }
+  if (a.google) {
+    try {
+      await loadScript('https://accounts.google.com/gsi/client');
+      window.google.accounts.id.initialize({ client_id: a.google, callback: (r) => postAuth('google', r.credential) });
+      window.google.accounts.id.renderButton($('#g-btn'), { theme: 'outline', size: 'large', text: 'continue_with', width: 280, locale: 'ko' });
+      window.google.accounts.id.renderButton($('#g-btn-link'), { theme: 'outline', size: 'medium', text: 'signin', locale: 'ko' });
+    } catch {}
+  }
+}
+function renderAccount() {
+  const a = st.info?.auth;
+  if (!st.me || !a || !(a.google || a.kakao || a.apple)) return;
+  const linked = st.me.linked ?? [];
+  $('#account-state').textContent = linked.length ? `${linked.map((x) => PROVIDER[x] ?? x).join(', ')} 연결됨` : '연결하면 다른 기기에서도 이어서 하고, 결제한 입장권이 안전하게 남아.';
+  $('#g-btn-link').hidden = !a.google || linked.includes('google');
+  $('#btn-kakao-link').hidden = !a.kakao || linked.includes('kakao');
+  $('#btn-apple-link').hidden = !a.apple || linked.includes('apple');
+}
+
+// ───────────── 입장권 · 결제 ─────────────
+function renderWallet() {
+  const w = st.me?.wallet;
+  if (!w) return;
+  $('#wallet-sum').textContent = `오늘 ${w.total}회 입장 가능`;
+  const parts = [`무료 ${w.free}/1`];
+  if (w.subActive) parts.push(`월정액 오늘 ${w.subLeft}/3 (${new Date(w.subUntil).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}까지)`);
+  parts.push(`입장권 ${w.tickets}장`);
+  $('#wallet-detail').textContent = parts.join(' · ') + ' · 방이 시작될 때 1회 사용';
+  $('#wallet-box').classList.toggle('empty', w.total <= 0);
+  const prods = st.info?.pay?.products ?? [];
+  const canPay = st.info?.pay?.nice || st.info?.pay?.mock;
+  $('#shop').innerHTML = canPay
+    ? prods.map((p) => `<button type="button" data-prod="${p.id}"><b>${p.krw.toLocaleString()}원</b>${esc(p.name.replace('입장권 ', ''))}${p.id === 't5' ? '<br><span class="best">20% 할인</span>' : p.id === 'sub30' ? '<br><span class="best">추천</span>' : ''}</button>`).join('')
+    : '';
+  for (const b of document.querySelectorAll('#shop button')) b.onclick = () => buy(b.dataset.prod);
+  if (!canPay) $('#shop-note').textContent = '결제는 준비 중이야.';
+  else if (st.info.pay.mock) $('#shop-note').textContent = '개발 모드: 실제 돈이 나가지 않는 모의 결제야.';
+}
+async function buy(productId) {
+  $('#shop-note').textContent = '';
+  const r = await fetch('/api/pay/order', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ product: productId }) }).catch(() => null);
+  const o = r ? await r.json().catch(() => ({})) : {};
+  if (!r?.ok) {
+    $('#shop-note').textContent = o.error ?? '주문을 만들지 못했어';
+    if (o.needLink) $('#account-box').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (o.mock) {
+    if (!confirm(`[모의 결제] ${o.goodsName} ${o.amount.toLocaleString()}원\n실제로 돈이 나가지 않아. 결제할까?`)) return;
+    const m = await fetch('/api/pay/mock', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ orderId: o.orderId }) });
+    const j = await m.json();
+    if (m.ok) {
+      st.me = j.me;
+      renderWallet();
+      $('#shop-note').textContent = '✅ (모의) 결제 완료! 입장권이 들어왔어.';
+    } else $('#shop-note').textContent = j.error;
+    return;
+  }
+  try {
+    await loadScript(o.nice.jsUrl);
+    window.AUTHNICE.requestPay({
+      clientId: o.nice.clientId,
+      method: 'card',
+      orderId: o.orderId,
+      amount: o.amount,
+      goodsName: o.goodsName,
+      returnUrl: o.nice.returnUrl,
+      fnError: (e) => ($('#shop-note').textContent = `결제창 오류: ${e?.errorMsg ?? ''}`),
+    });
+  } catch {
+    $('#shop-note').textContent = '결제창을 열지 못했어. 잠시 뒤 다시 시도해 줘.';
+  }
+}
 
 // ───────────── 통신 ─────────────
 function connect() {
@@ -282,6 +464,10 @@ function onMessage(m) {
     st.clockOffset = m.s + rtt / 2 - Date.now();
   } else if (m.t === 'welcome') {
     st.me = m.me;
+  } else if (m.t === 'queueError') {
+    $('#queue-msg').textContent = m.error;
+    $('#wallet-box').classList.add('empty');
+    $('#wallet-box').scrollIntoView({ behavior: 'smooth', block: 'center' });
   } else if (m.t === 'queue') {
     st.view = null;
     if (st.swReg?.waiting) st.swReg.waiting.postMessage('skipWaiting');

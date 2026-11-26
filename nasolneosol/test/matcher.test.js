@@ -42,3 +42,54 @@ test('가입: 나이 조건 검사 (비우면 40 = 상관없음)', () => {
   assert.throws(() => validateProfile({ ...base, ageUp: 41 }, { minAge: 19 }));
   assert.throws(() => validateProfile({ ...base, ageDown: -1 }, { minAge: 19 }));
 });
+
+test('입장권: 하루 무료 1회 → 월정액 3회 → 회차권, 한국 자정에 초기화', async () => {
+  const { entryStatus, consumeEntry, grantProduct, kstDay } = await import('../server/wallet.js');
+  const u = { id: 'x' };
+  const t0 = Date.parse('2026-11-26T10:00:00+09:00');
+  assert.equal(entryStatus(u, t0).total, 1);
+  assert.equal(consumeEntry(u, t0), 'free');
+  assert.equal(consumeEntry(u, t0), null);
+  grantProduct(u, 't5', t0);
+  grantProduct(u, 'sub30', t0);
+  assert.equal(entryStatus(u, t0).total, 3 + 5);
+  for (let i = 0; i < 3; i++) assert.equal(consumeEntry(u, t0), 'sub');
+  assert.equal(consumeEntry(u, t0), 'ticket');
+  assert.equal(entryStatus(u, t0).tickets, 4);
+  // 다음날 (한국 시간 자정 지나서)
+  const t1 = Date.parse('2026-11-27T00:05:00+09:00');
+  assert.notEqual(kstDay(t0), kstDay(t1));
+  assert.equal(entryStatus(u, t1).total, 1 + 3 + 4);
+  // 월정액 30일 뒤 만료, 다시 사면 이어서 연장
+  const t31 = t0 + 31 * 86400_000;
+  assert.equal(entryStatus(u, t31).subActive, false);
+  grantProduct(u, 'sub30', t0 + 10 * 86400_000);
+  assert.ok(u.wallet.subUntil > t0 + 59 * 86400_000);
+});
+
+test('간편 로그인: 다른 앱용 토큰·서명이 틀린 토큰은 거부', async () => {
+  const { verifyJwt } = await import('../server/social.js');
+  const { generateKeyPairSync, createSign } = await import('node:crypto');
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', kty: 'RSA' };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ keys: [jwk] }) });
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const make = (payload) => {
+    const h = enc({ alg: 'RS256', kid: 'k1' });
+    const b = enc(payload);
+    return `${h}.${b}.${createSign('RSA-SHA256').update(`${h}.${b}`).sign(privateKey).toString('base64url')}`;
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const opts = { jwksUrl: 'https://test/jwks', audiences: ['my-app'], issuers: ['https://accounts.google.com'] };
+  try {
+    const ok = await verifyJwt(make({ iss: 'https://accounts.google.com', aud: 'my-app', sub: '42', iat: now, exp: now + 600 }), opts);
+    assert.equal(ok.sub, '42');
+    await assert.rejects(verifyJwt(make({ iss: 'https://accounts.google.com', aud: 'other-app', sub: '42', iat: now, exp: now + 600 }), opts));
+    await assert.rejects(verifyJwt(make({ iss: 'https://accounts.google.com', aud: 'my-app', sub: '42', iat: now - 7200, exp: now - 3600 }), opts));
+    const t = make({ iss: 'https://accounts.google.com', aud: 'my-app', sub: '42', iat: now, exp: now + 600 });
+    await assert.rejects(verifyJwt(t.slice(0, -4) + 'AAAA', opts));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

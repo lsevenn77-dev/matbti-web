@@ -69,6 +69,23 @@ cd "$DIR/nasolneosol"
 npm install --omit=dev --no-audit --no-fund >/dev/null
 mkdir -p "$DATA_DIR"
 
+if [ ! -f /etc/nasolneosol.env ]; then
+  cat > /etc/nasolneosol.env <<'EOF'
+# 나솔너솔 비밀 설정 — 값을 채운 뒤: systemctl restart nasolneosol
+# 설명: nasolneosol/deploy/LOGIN_PAY_SETUP.md
+PUBLIC_URL=https://nasol.dasi-on.co.kr
+GOOGLE_OAUTH_CLIENT_IDS=
+KAKAO_REST_API_KEY=
+KAKAO_APP_ID=
+KAKAO_CLIENT_SECRET=
+APPLE_SIGN_IN_AUDIENCES=
+NICEPAY_CLIENT_KEY=
+NICEPAY_SECRET_KEY=
+NICEPAY_MODE=sandbox
+EOF
+  chmod 600 /etc/nasolneosol.env
+fi
+
 say "서비스 등록 (부팅 시 자동 실행, 꺼지면 자동 재시작)"
 cat > /etc/systemd/system/nasolneosol.service <<EOF
 [Unit]
@@ -82,6 +99,8 @@ Environment=PORT=$PORT
 Environment=TIME_SCALE=$TIME_SCALE
 Environment=DEV_TOOLS=$DEV_TOOLS
 Environment=DATA_DIR=$DATA_DIR
+# 간편 로그인·결제 키는 여기 (채팅·깃에 올리지 않는다). 없으면 그 기능만 꺼진 채로 동작
+EnvironmentFile=-/etc/nasolneosol.env
 Restart=always
 RestartSec=2
 

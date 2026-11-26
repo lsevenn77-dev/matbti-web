@@ -20,6 +20,10 @@ import { MockVoiceAdapter } from './voice.js';
 import { FileStore, decodeDataUrl, validateProfile } from './store.js';
 import { BotDriver, botProfile, botPhotoSvg } from './bots.js';
 import { formGroup, needFor } from './matcher.js';
+import { PRODUCTS, entryStatus, canEnter, consumeEntry, grantProduct } from './wallet.js';
+import { socialConfig, verifyGoogle, verifyApple, verifyKakaoCode, kakaoAuthorizeUrl, SocialAuthError } from './social.js';
+import { payConfig, newOrderId, niceApprove } from './payments.js';
+import { randomBytes } from 'node:crypto';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -36,6 +40,14 @@ export function createServer(opts = {}) {
   const config = makeConfig(PRESETS[env.PRESET] ?? {}, env.VOTER ? { firstVote: { voterGender: env.VOTER } } : {}, opts.config ?? {});
   const store = new FileStore(opts.dataDir === null ? null : path.resolve(env.DATA_DIR || path.join(ROOT, 'data')));
   const voice = new MockVoiceAdapter({ log: env.VOICE_LOG === '1' });
+
+  const social = socialConfig(env);
+  const pay = payConfig(env);
+  const signupTickets = new Map(); // ticket → { identity, until }  (간편 로그인 후 아직 프로필이 없는 사람)
+  const kakaoStates = new Map(); // state → { linkUserId, until }
+  const authResults = new Map(); // id → { body, until }  (카카오 리다이렉트 결과 전달용)
+  const shortId = () => randomBytes(18).toString('base64url');
+  const sweep = (m) => { const t = Date.now(); for (const [k, v] of m) if (v.until < t) m.delete(k); };
 
   /** userId → Set<ws> */
   const sockets = new Map();
@@ -72,6 +84,7 @@ export function createServer(opts = {}) {
 
   function joinQueue(user) {
     if (userRoom.has(user.id) || queue.some((q) => q.userId === user.id)) return;
+    if (!canEnter(user)) return send(user.id, { t: 'queueError', error: '오늘 남은 입장권이 없어. 입장권을 사거나 내일 다시 와 줘.' });
     queue.push({ userId: user.id, gender: user.profile.gender, at: Date.now() });
     tryFormRoom();
     broadcastQueue();
@@ -85,11 +98,18 @@ export function createServer(opts = {}) {
 
   function tryFormRoom() {
     // 선착순 + 나이 조건: 방 안의 모든 남녀 쌍이 서로의 나이 범위 안에 들어야 한다
-    const group = formGroup(queueEntries(), config.slots);
+    // 입장권이 남아 있는 사람만 (대기 중에 날짜가 바뀌는 등)
+    const group = formGroup(queueEntries().filter((q) => { const u = store.get(q.userId); return u && canEnter(u); }), config.slots);
     if (!group) return;
     const ids = new Set(group.map((c) => c.userId));
     const chosen = queue.filter((q) => ids.has(q.userId));
     for (const c of chosen) queue.splice(queue.indexOf(c), 1);
+    // 방이 시작될 때 입장권 1회 사용
+    for (const c of chosen) {
+      const u = store.get(c.userId);
+      if (u && !u.isBot) c.used = consumeEntry(u);
+    }
+    store.persist();
     const id = `r${Date.now().toString(36)}${(++roomSeq).toString(36)}`;
     const members = chosen.map((c) => {
       const u = store.get(c.userId);
@@ -208,7 +228,49 @@ export function createServer(opts = {}) {
   }
 
   function meResponse(u) {
-    return { id: u.id, profile: u.profile, inRoom: userRoom.has(u.id) };
+    return {
+      id: u.id,
+      profile: u.profile,
+      inRoom: userRoom.has(u.id),
+      wallet: entryStatus(u),
+      linked: (u.identities ?? []).map((k) => k.split(':')[0]),
+    };
+  }
+
+  function readForm(req) {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let size = 0;
+      req.on('data', (c) => {
+        size += c.length;
+        if (size > 64 * 1024) { reject(new Error('요청이 너무 크다')); req.destroy(); } else chunks.push(c);
+      });
+      req.on('end', () => resolve(Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString('utf8')))));
+      req.on('error', reject);
+    });
+  }
+
+  function publicUrl(req) {
+    if (social.publicUrl) return social.publicUrl;
+    const proto = String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0];
+    return `${proto}://${req.headers.host}`;
+  }
+
+  /** 간편 로그인 결과 → 로그인 / 계정 연결 / 신규 가입 티켓 */
+  function resolveIdentity(ident, linkUser) {
+    const existing = store.byIdentity(ident.provider, ident.sub);
+    if (existing) {
+      if (linkUser && linkUser.id !== existing.id) return { status: 409, body: { error: '이 계정은 이미 다른 프로필에 연결돼 있어' } };
+      return { status: 200, body: { token: existing.token, me: meResponse(existing) } };
+    }
+    if (linkUser) {
+      store.linkIdentity(linkUser.id, ident.provider, ident.sub);
+      return { status: 200, body: { token: linkUser.token, me: meResponse(linkUser), linked: true } };
+    }
+    sweep(signupTickets);
+    const ticket = shortId();
+    signupTickets.set(ticket, { identity: ident, until: Date.now() + 10 * 60 * 1000 });
+    return { status: 200, body: { signupTicket: ticket, provider: ident.provider } };
   }
 
   const server = http.createServer(async (req, res) => {
@@ -218,9 +280,19 @@ export function createServer(opts = {}) {
       if (p === '/api/signup' && req.method === 'POST') {
         const body = await readBody(req);
         const profile = validateProfile(body, { minAge: config.minAge });
+        // 간편 로그인으로 시작한 경우 그 계정에 연결
+        let ident = null;
+        if (body.signupTicket) {
+          const t = signupTickets.get(String(body.signupTicket));
+          if (!t || t.until < Date.now()) return json(res, 400, { error: '간편 로그인 시간이 지났어. 다시 로그인해 줘' });
+          if (store.byIdentity(t.identity.provider, t.identity.sub)) return json(res, 409, { error: '이미 가입된 계정이야. 다시 로그인해 줘' });
+          ident = t.identity;
+          signupTickets.delete(String(body.signupTicket));
+        }
         const { buf, mime } = decodeDataUrl(body.photo);
         profile.photoUrl = store.savePhoto(buf, mime);
         const u = store.createUser(profile);
+        if (ident) store.linkIdentity(u.id, ident.provider, ident.sub);
         return json(res, 200, { token: u.token, me: meResponse(u) });
       }
       if (p === '/api/me' && req.method === 'GET') {
@@ -241,6 +313,119 @@ export function createServer(opts = {}) {
         broadcastQueue();
         return json(res, 200, meResponse(u));
       }
+      // ── 간편 로그인 ──
+      if ((p === '/api/auth/google' || p === '/api/auth/apple') && req.method === 'POST') {
+        const body = await readBody(req, 16 * 1024);
+        try {
+          const ident = p.endsWith('google') ? await verifyGoogle(social, body.credential) : await verifyApple(social, body.credential);
+          const r = resolveIdentity(ident, authUser(req));
+          return json(res, r.status, r.body);
+        } catch (e) {
+          return json(res, 401, { error: e instanceof SocialAuthError ? e.message : '로그인 확인에 실패했어' });
+        }
+      }
+      if (p === '/api/auth/kakao/start' && req.method === 'POST') {
+        if (!social.kakaoRestKey) return json(res, 400, { error: '카카오 로그인 설정이 아직 없어' });
+        sweep(kakaoStates);
+        const state = shortId();
+        kakaoStates.set(state, { linkUserId: authUser(req)?.id ?? null, until: Date.now() + 10 * 60 * 1000 });
+        return json(res, 200, { url: kakaoAuthorizeUrl({ ...social, publicUrl: publicUrl(req) }, state) });
+      }
+      if (p === '/auth/kakao/callback' && req.method === 'GET') {
+        const st0 = kakaoStates.get(url.searchParams.get('state') ?? '');
+        kakaoStates.delete(url.searchParams.get('state') ?? '');
+        let out;
+        try {
+          if (!st0 || st0.until < Date.now()) throw new SocialAuthError('로그인 요청이 만료됐어. 다시 시도해 줘');
+          if (url.searchParams.get('error')) throw new SocialAuthError('카카오 로그인을 취소했어');
+          const ident = await verifyKakaoCode({ ...social, publicUrl: publicUrl(req) }, url.searchParams.get('code'));
+          out = resolveIdentity(ident, st0.linkUserId ? store.get(st0.linkUserId) : null);
+        } catch (e) {
+          out = { status: 401, body: { error: e instanceof SocialAuthError ? e.message : '카카오 로그인에 실패했어' } };
+        }
+        sweep(authResults);
+        const id = shortId();
+        authResults.set(id, { ...out, until: Date.now() + 5 * 60 * 1000 });
+        res.writeHead(302, { Location: `/?auth=${id}`, 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+      if (p === '/api/auth/result' && req.method === 'POST') {
+        const body = await readBody(req, 4096);
+        const r = authResults.get(String(body.id ?? ''));
+        authResults.delete(String(body.id ?? ''));
+        if (!r) return json(res, 404, { error: '로그인 결과가 만료됐어. 다시 시도해 줘' });
+        return json(res, r.status, r.body);
+      }
+
+      // ── 결제 ──
+      if (p === '/api/pay/order' && req.method === 'POST') {
+        const u = authUser(req);
+        if (!u) return json(res, 401, { error: '로그인이 필요하다' });
+        const body = await readBody(req, 4096);
+        const prod = PRODUCTS[body.product];
+        if (!prod) return json(res, 400, { error: '알 수 없는 상품' });
+        const realPay = !!(pay.clientKey && pay.secretKey);
+        if (!realPay && !devTools) return json(res, 503, { error: '결제 준비 중이야' });
+        // 결제한 입장권이 사라지지 않도록, 실제 결제는 간편 로그인 계정이 연결된 사람만
+        if (realPay && !(u.identities ?? []).length) return json(res, 403, { error: '결제 전에 카카오·구글·애플 계정을 연결해 줘', needLink: true });
+        const order = store.saveOrder({ orderId: newOrderId(), userId: u.id, product: prod.id, amount: prod.krw, goodsName: `나솔너솔 ${prod.name}`, status: 'ready', createdAt: Date.now(), mode: realPay ? 'nice' : 'mock' });
+        return json(res, 200, {
+          orderId: order.orderId,
+          amount: order.amount,
+          goodsName: order.goodsName,
+          nice: realPay ? { clientId: pay.clientKey, jsUrl: pay.jsUrl, returnUrl: `${publicUrl(req)}/pay/nice/return` } : null,
+          mock: !realPay,
+        });
+      }
+      if (p === '/api/pay/mock' && req.method === 'POST') {
+        if (!devTools) return json(res, 403, { error: 'DEV_TOOLS 꺼짐' });
+        const u = authUser(req);
+        const body = await readBody(req, 4096);
+        const o = store.orders.get(String(body.orderId ?? ''));
+        if (!u || !o || o.userId !== u.id || o.mode !== 'mock') return json(res, 404, { error: '주문을 찾을 수 없어' });
+        if (o.status !== 'paid') {
+          grantProduct(u, o.product);
+          o.status = 'paid';
+          o.paidAt = Date.now();
+          store.saveOrder(o);
+          store.persist();
+        }
+        return json(res, 200, { ok: true, me: meResponse(u) });
+      }
+      if (p === '/pay/nice/return' && req.method === 'POST') {
+        const f = await readForm(req);
+        const o = store.orders.get(String(f.orderId ?? ''));
+        let to = '/?pay=fail';
+        try {
+          if (!o || o.mode !== 'nice') throw new Error('주문 없음');
+          if (o.status === 'paid') to = `/?pay=ok&order=${o.orderId}`;
+          else if (f.authResultCode !== '0000') {
+            o.status = 'failed';
+            o.failMsg = String(f.authResultMsg ?? '').slice(0, 80);
+            store.saveOrder(o);
+            to = `/?pay=cancel`;
+          } else {
+            if (Number(f.amount) !== o.amount) throw new Error('금액 불일치');
+            const r = await niceApprove(pay, String(f.tid), o.amount);
+            const u = store.get(o.userId);
+            grantProduct(u, o.product);
+            Object.assign(o, { status: 'paid', paidAt: Date.now(), tid: String(f.tid), receiptUrl: r.receiptUrl ?? null });
+            store.saveOrder(o);
+            store.persist();
+            to = `/?pay=ok&order=${o.orderId}`;
+          }
+        } catch (e) {
+          if (o) {
+            o.status = 'error';
+            o.failMsg = String(e.message).slice(0, 120);
+            store.saveOrder(o);
+          }
+          console.error('[pay] 승인 실패', f.orderId, e.message);
+        }
+        res.writeHead(303, { Location: to, 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+
       if (p === '/api/info') {
         return json(res, 200, {
           devTools,
@@ -250,6 +435,12 @@ export function createServer(opts = {}) {
           slots: config.slots,
           minAge: config.minAge,
           voice: 'mock',
+          auth: {
+            google: social.googleClientIds[0] ?? null,
+            kakao: !!(social.kakaoRestKey && social.kakaoAppId),
+            apple: social.appleAudiences[0] ?? null,
+          },
+          pay: { nice: !!(pay.clientKey && pay.secretKey), mock: devTools && !(pay.clientKey && pay.secretKey), products: Object.values(PRODUCTS) },
           // 자동 업데이트가 게임 중에는 재시작하지 않도록: 사람이 들어 있는 진행 중인 방 수
           activeRooms: [...rooms.values()].filter(({ room }) => room.phase !== 'ended' && [...room.participants.values()].some((x) => !x.isBot && x.connected)).length,
         });
