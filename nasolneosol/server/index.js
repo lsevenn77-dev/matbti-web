@@ -86,25 +86,151 @@ export function createServer(opts = {}) {
 
   function joinQueue(user) {
     if (userRoom.has(user.id) || queue.some((q) => q.userId === user.id)) return;
+    const party = partyOf(user.id);
+    if (party) return joinQueueParty(user, party);
     if (!canEnter(user)) return send(user.id, { t: 'queueError', error: '오늘 남은 입장권이 없어. 입장권을 사거나 내일 다시 와 줘.' });
     queue.push({ userId: user.id, gender: user.profile.gender, at: Date.now() });
     tryFormRoom();
     broadcastQueue();
   }
 
-  function leaveQueue(userId) {
-    const i = queue.findIndex((q) => q.userId === userId);
-    if (i >= 0) queue.splice(i, 1);
+  /** 동반 입장: 일행 모두 조건이 될 때만 함께 대기열에 넣는다 */
+  function joinQueueParty(user, party) {
+    const err = (m) => send(user.id, { t: 'queueError', error: m, party: true });
+    for (const id of party.members) {
+      const u = store.get(id);
+      const who = id === user.id ? '내' : '함께 입장하는 친구의';
+      if (!u) return err('함께 입장하는 친구를 찾을 수 없어');
+      if (userRoom.has(id)) return err('함께 입장하는 친구가 아직 게임 중이야');
+      if (!u.isBot && !isOnline(id)) return err('함께 입장하는 친구가 접속해 있지 않아');
+      if (!canEnter(u)) return err(`${who} 남은 입장권이 없어`);
+    }
+    const at = Date.now();
+    for (const id of party.members) {
+      if (queue.some((q) => q.userId === id)) continue;
+      queue.push({ userId: id, gender: store.get(id).profile.gender, at, partyId: party.id });
+    }
+    tryFormRoom();
     broadcastQueue();
+  }
+
+  function leaveQueue(userId) {
+    // 동반 입장 일행은 함께 빠진다
+    const pid = queue.find((q) => q.userId === userId)?.partyId;
+    for (let i = queue.length - 1; i >= 0; i--) {
+      if (queue[i].userId === userId || (pid && queue[i].partyId === pid)) queue.splice(i, 1);
+    }
+    broadcastQueue();
+  }
+
+  // ── 동반 입장 (같은 성별 친구, 본인 포함 최대 2명) ──
+  const PARTY_MAX = 2;
+  const INVITE_TTL = 2 * 60 * 1000;
+  /** partyId → { id, members: [userId], at } */
+  const parties = new Map();
+  /** userId → partyId */
+  const userParty = new Map();
+  /** 초대받은 사람 userId → { from, at } */
+  const partyInvites = new Map();
+  /** 접속이 끊긴 일행 정리 타이머 */
+  const partyGrace = new Map();
+  const isOnline = (id) => (sockets.get(id)?.size ?? 0) > 0;
+  const partyOf = (id) => parties.get(userParty.get(id)) ?? null;
+  const inQueue = (id) => queue.some((q) => q.userId === id);
+
+  function partyView(me) {
+    const p = partyOf(me);
+    const inv = partyInvites.get(me);
+    const live = inv && inv.at + INVITE_TTL > Date.now() ? inv : null;
+    return {
+      party: p ? { id: p.id, members: p.members.map((id) => ({ ...personCard(me, id), me: id === me })) } : null,
+      invite: live ? { from: personCard(me, live.from), until: live.at + INVITE_TTL } : null,
+      sent: [...partyInvites].filter(([, v]) => v.from === me && v.at + INVITE_TTL > Date.now()).map(([to]) => to),
+    };
+  }
+  function sendParty(id) {
+    send(id, { t: 'party', ...partyView(id) });
+  }
+
+  class PartyError extends Error {}
+  function partyInvite(me, to) {
+    const fail = (m) => { throw new PartyError(m); };
+    const a = store.get(me);
+    const b = store.get(to);
+    if (!b || me === to) fail('초대할 수 없는 상대야');
+    if (!relations.areFriends(me, to) || relations.isBlocked(me, to)) fail('친구에게만 함께 입장하자고 할 수 있어');
+    if (a.profile.gender !== b.profile.gender) fail('이성 친구와는 함께 입장할 수 없어. 같은 성별 친구만 돼');
+    if (!isOnline(to)) fail('친구가 접속해 있지 않아');
+    if (userRoom.has(me) || userRoom.has(to)) fail('게임 중에는 초대할 수 없어');
+    if (inQueue(me) || inQueue(to)) fail('대기 중에는 초대할 수 없어. 대기를 취소하고 다시 해 줘');
+    if (partyOf(to)) fail('친구가 이미 다른 사람과 함께 입장하기로 했어');
+    const mine = partyOf(me);
+    if (mine && mine.members.length >= PARTY_MAX) fail(`함께 입장은 본인 포함 ${PARTY_MAX}명까지야`);
+    partyInvites.set(to, { from: me, at: Date.now() });
+    sendParty(to);
+    sendParty(me);
+  }
+  function partyRespond(me, accept) {
+    const inv = partyInvites.get(me);
+    partyInvites.delete(me);
+    if (!inv || inv.at + INVITE_TTL < Date.now()) throw new PartyError('초대가 만료됐어');
+    const from = inv.from;
+    if (accept) {
+      // 수락 시점에 다시 확인
+      const a = store.get(from);
+      const b = store.get(me);
+      if (!a || !relations.areFriends(me, from) || a.profile.gender !== b.profile.gender) throw new PartyError('함께 입장할 수 없는 상대야');
+      if (userRoom.has(from) || userRoom.has(me)) throw new PartyError('친구가 게임 중이야');
+      if (inQueue(from)) leaveQueue(from);
+      if (inQueue(me)) leaveQueue(me);
+      leaveParty(me, { quiet: true });
+      let p = partyOf(from);
+      if (p && p.members.length >= PARTY_MAX) throw new PartyError('친구의 일행이 이미 꽉 찼어');
+      if (!p) {
+        p = { id: shortId(), members: [from], at: Date.now() };
+        parties.set(p.id, p);
+        userParty.set(from, p.id);
+      }
+      p.members.push(me);
+      userParty.set(me, p.id);
+      for (const id of p.members) sendParty(id);
+    } else {
+      sendParty(from);
+      send(from, { t: 'partyNote', text: '친구가 함께 입장 초대를 거절했어' });
+    }
+    sendParty(me);
+  }
+  function leaveParty(me, { quiet = false } = {}) {
+    const p = partyOf(me);
+    if (!p) return;
+    if (p.members.some(inQueue)) leaveQueue(me);
+    // 2명 일행이라 한 명이 나가면 해산
+    for (const id of p.members) {
+      userParty.delete(id);
+      clearTimeout(partyGrace.get(id));
+      partyGrace.delete(id);
+    }
+    parties.delete(p.id);
+    for (const id of p.members) {
+      if (id !== me) {
+        sendParty(id);
+        if (!quiet) send(id, { t: 'partyNote', text: '함께 입장이 해제됐어' });
+      }
+    }
+    sendParty(me);
   }
 
   function tryFormRoom() {
     // 선착순 + 나이 조건: 방 안의 모든 남녀 쌍이 서로의 나이 범위 안에 들어야 한다
     // 입장권이 남아 있는 사람만 (대기 중에 날짜가 바뀌는 등)
-    const group = formGroup(queueEntries().filter((q) => { const u = store.get(q.userId); return u && canEnter(u); }), config.slots);
+    const ok = (id) => { const u = store.get(id); return !!u && canEnter(u); };
+    // 동반 입장 일행은 한 명이라도 입장권이 없으면 일행 전체를 이번 방 후보에서 뺀다
+    const group = formGroup(queueEntries().filter((q) => (q.partyId ? queue.filter((x) => x.partyId === q.partyId).every((x) => ok(x.userId)) : ok(q.userId))), config.slots);
     if (!group) return;
     const ids = new Set(group.map((c) => c.userId));
     const chosen = queue.filter((q) => ids.has(q.userId));
+    // 방에 들어가면 받은 동반 초대는 의미가 없다
+    for (const c of chosen) partyInvites.delete(c.userId);
     for (const c of chosen) queue.splice(queue.indexOf(c), 1);
     // 방이 시작될 때 입장권 1회 사용
     for (const c of chosen) {
@@ -386,6 +512,7 @@ export function createServer(opts = {}) {
             send(other, { t: 'social' });
             return json(res, 200, { ok: true });
           }
+          if ((p === '/api/friends/remove' || p === '/api/block') && partyOf(u.id)?.members.includes(other)) leaveParty(u.id);
           if (p === '/api/friends/remove') {
             relations.unfriend(u.id, other);
             send(other, { t: 'social' });
@@ -619,6 +746,9 @@ export function createServer(opts = {}) {
         if (!sockets.has(user.id)) sockets.set(user.id, new Set());
         sockets.get(user.id).add(ws);
         ws.send(JSON.stringify({ t: 'welcome', me: meResponse(user) }));
+        clearTimeout(partyGrace.get(user.id));
+        partyGrace.delete(user.id);
+        sendParty(user.id);
         const rid = userRoom.get(user.id);
         if (rid && rooms.has(rid)) {
           // 재접속: 서버 최신 단계로 복구
@@ -633,6 +763,18 @@ export function createServer(opts = {}) {
       }
       if (msg.t === 'queue.join') return joinQueue(user);
       if (msg.t === 'queue.leave') return leaveQueue(user.id);
+      if (msg.t === 'party.invite' || msg.t === 'party.respond' || msg.t === 'party.leave') {
+        try {
+          if (msg.t === 'party.invite') partyInvite(user.id, String(msg.to ?? ''));
+          if (msg.t === 'party.respond') partyRespond(user.id, !!msg.accept);
+          if (msg.t === 'party.leave') leaveParty(user.id);
+        } catch (e) {
+          if (!(e instanceof PartyError)) throw e;
+          send(user.id, { t: 'partyNote', text: e.message, error: true });
+          sendParty(user.id);
+        }
+        return;
+      }
       if (msg.t === 'act') {
         const rid = userRoom.get(user.id);
         const entry = rid && rooms.get(rid);
@@ -666,8 +808,19 @@ export function createServer(opts = {}) {
       set?.delete(ws);
       if (set && set.size === 0) {
         sockets.delete(user.id);
-        // [임시] 대기열에 있던 사람은 연결이 끊기면 대기열에서 뺀다
+        // [임시] 대기열에 있던 사람은 연결이 끊기면 대기열에서 뺀다 (동반 일행도 함께)
         if (!userRoom.has(user.id)) leaveQueue(user.id);
+        // 동반 입장: 새로고침 정도는 기다려 주고, 30초 넘게 안 돌아오면 해산
+        const uid = user.id;
+        if (partyOf(uid) || partyInvites.has(uid)) {
+          clearTimeout(partyGrace.get(uid));
+          partyGrace.set(uid, setTimeout(() => {
+            partyGrace.delete(uid);
+            if (isOnline(uid)) return;
+            partyInvites.delete(uid);
+            if (!userRoom.has(uid)) leaveParty(uid);
+          }, 30 * 1000).unref());
+        }
         const rid = userRoom.get(user.id);
         if (rid && rooms.has(rid)) {
           const { room } = rooms.get(rid);

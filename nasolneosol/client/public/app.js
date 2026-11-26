@@ -1,6 +1,6 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=22';
-import { AudioDirector } from './audio.js?v=22';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=23';
+import { AudioDirector } from './audio.js?v=23';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -253,6 +253,8 @@ function showLobby(status) {
   }
   renderWallet();
   renderAccount();
+  renderParty();
+  if (status?.inQueue && st.party.party) $('#queue-msg').textContent += ' 👥 친구와 함께 대기 중';
   refreshSocialSoon();
   // 입장권은 방이 시작될 때 줄어드니 대기 화면에 올 때마다 새로 받아 온다
   if (!st.meFetchedAt || Date.now() - st.meFetchedAt > 5000) {
@@ -535,6 +537,78 @@ function onDm(m) {
     if (!m.message.mine && !st.view) toastLobby('💬 새 메시지가 왔어');
   }
 }
+// ───────────── 동반 입장 (같은 성별 친구, 본인 포함 2명) ─────────────
+st.party = { party: null, invite: null, sent: [] };
+function onParty(m) {
+  st.party = { party: m.party, invite: m.invite, sent: m.sent ?? [] };
+  renderParty();
+}
+function renderParty() {
+  const { party, invite } = st.party;
+  const bar = $('#party-bar');
+  if (party) {
+    const others = party.members.filter((x) => !x.me);
+    bar.innerHTML = `<div class="party-on"><span class="pt-label">👥 함께 입장</span>${party.members.map((x) => `<img src="${esc(x.photoUrl)}" alt="" title="${esc(x.me ? '나' : x.alias)}" />`).join('')}<span class="pt-name">${others.map((x) => esc(x.alias || '친구')).join(', ')}${others.length ? '와 함께' : ''}</span><button type="button" class="pt-x" id="btn-party-leave" aria-label="함께 입장 해제">해제</button></div>`;
+    $('#btn-party-leave').onclick = () => sendWs({ t: 'party.leave' });
+  } else {
+    bar.innerHTML = '<button type="button" class="party-btn" id="btn-party-open">👥 친구와 함께 입장</button>';
+    $('#btn-party-open').onclick = openPartyPicker;
+  }
+  // 받은 초대
+  const box = $('#party-invite');
+  box.hidden = !invite || !!st.view;
+  if (invite) {
+    $('#pi-photo').src = invite.from.photoUrl;
+    $('#pi-name').textContent = `${invite.from.alias || '친구'} · ${invite.from.age}세`;
+    const tick = () => {
+      const s = Math.max(0, Math.round((invite.until - Date.now()) / 1000));
+      $('#pi-left').textContent = `${s}초 안에 응답해 줘`;
+      if (s <= 0) box.hidden = true;
+    };
+    tick();
+    clearInterval(renderParty.t);
+    renderParty.t = setInterval(() => (box.hidden ? clearInterval(renderParty.t) : tick()), 1000);
+  }
+  if (!$('#modal-party').hidden) renderPartyPicker();
+}
+$('#pi-yes').addEventListener('click', () => { sendWs({ t: 'party.respond', accept: true }); $('#party-invite').hidden = true; });
+$('#pi-no').addEventListener('click', () => { sendWs({ t: 'party.respond', accept: false }); $('#party-invite').hidden = true; });
+$('#btn-party-open2').addEventListener('click', () => openPartyPicker());
+async function openPartyPicker() {
+  openModal('#modal-party');
+  renderPartyPicker();
+  await loadSocial();
+  renderPartyPicker();
+}
+function renderPartyPicker() {
+  const list = $('#party-pick');
+  const d = soc.data;
+  if (!d) return (list.innerHTML = '<p class="empty">불러오는 중…</p>');
+  const myG = st.me?.profile.gender;
+  const same = d.friends.filter((c) => c.gender === myG);
+  const inParty = new Set((st.party.party?.members ?? []).map((x) => x.id));
+  if (!same.length) {
+    list.innerHTML = `<p class="empty">함께 입장할 수 있는 ${G[myG] ?? ''} 친구가 없어.<br>게임에서 만난 ${G[myG] ?? ''} 참가자에게 친구 신청을 해 봐.</p>`;
+    return;
+  }
+  list.innerHTML = same.map((c) => {
+    let act;
+    if (inParty.has(c.id)) act = '<span class="tag pk">함께 입장 중</span>';
+    else if (st.party.sent.includes(c.id)) act = '<span class="tag">초대 보냄</span>';
+    else if (c.inGame) act = '<span class="tag">게임 중</span>';
+    else if (!c.online) act = '<span class="tag">오프라인</span>';
+    else act = '<button type="button" class="pill-btn pk" data-act="invite">초대</button>';
+    return personRow(c, act);
+  }).join('');
+  for (const b of list.querySelectorAll('[data-act="invite"]')) {
+    b.onclick = () => {
+      b.disabled = true;
+      sendWs({ t: 'party.invite', to: b.closest('.person').dataset.id });
+      toastLobby('초대를 보냈어. 친구가 수락하면 함께 입장해.');
+    };
+  }
+}
+
 function toastLobby(text) {
   let el = $('#lobby-toast');
   if (!el) {
@@ -765,8 +839,11 @@ function onMessage(m) {
     st.me = m.me;
   } else if (m.t === 'queueError') {
     $('#queue-msg').textContent = m.error;
-    $('#wallet-box').classList.add('empty');
-    $('#wallet-box').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    toastLobby(m.error);
+    if (!m.party || /입장권/.test(m.error)) {
+      $('#wallet-box').classList.add('empty');
+      $('#wallet-box').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   } else if (m.t === 'queue') {
     st.view = null;
     if (st.swReg?.waiting) st.swReg.waiting.postMessage('skipWaiting');
@@ -779,6 +856,10 @@ function onMessage(m) {
     st.scene?.applyPose(m.id, m);
   } else if (m.t === 'chat') {
     addChat(m.message);
+  } else if (m.t === 'party') {
+    onParty(m);
+  } else if (m.t === 'partyNote') {
+    toastLobby(m.text);
   } else if (m.t === 'social') {
     refreshSocialSoon();
   } else if (m.t === 'dm') {
@@ -826,6 +907,7 @@ function onState(v) {
   st.view = v;
   audio.update(v);
   if (first) {
+    $('#party-invite').hidden = true;
     show('screen-game');
     st.scene ??= new GameScene($('#scene'), { onTapCharacter: openProfile, onTapFloor: tapFloor });
     st.scene.resize();
