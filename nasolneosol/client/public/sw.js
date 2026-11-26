@@ -1,5 +1,5 @@
 // 서비스 워커: 버전별 정적 파일 캐시. API·사진·게임 연결은 캐시하지 않는다.
-const VERSION = 'nsns-proto-0.9.8';
+const VERSION = 'nsns-proto-0.9.9';
 const ASSETS = ['/', '/index.html', '/style.css', '/app.js', '/scene.js', '/manifest.webmanifest',
   '/icons/icon-192.png', '/icons/icon-512.png', '/vendor/three/three.module.js', '/vendor/three/three.core.js',
   '/vendor/three-addons/loaders/GLTFLoader.js', '/vendor/three-addons/utils/BufferGeometryUtils.js', '/vendor/three-addons/utils/SkeletonUtils.js'];
@@ -27,5 +27,10 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(fetch(e.request).catch(() => caches.match('/index.html')));
     return;
   }
-  e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)));
+  // 앱 코드는 네트워크 우선(항상 최신), 안 되면 캐시. 큰 라이브러리(three)만 캐시 우선
+  if (url.pathname.startsWith('/vendor/')) {
+    e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)));
+    return;
+  }
+  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
 });

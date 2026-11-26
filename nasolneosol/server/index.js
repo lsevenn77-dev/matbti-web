@@ -273,7 +273,8 @@ export function createServer(opts = {}) {
       const rel = p === '/' ? '/index.html' : p;
       const f = path.normalize(path.join(STATIC, rel));
       if (!f.startsWith(STATIC)) return json(res, 403, { error: 'forbidden' });
-      const cache = rel === '/index.html' || rel === '/sw.js' || rel.endsWith('.webmanifest') ? 'no-cache' : 'public, max-age=300';
+      // 앱 코드(html·js·css·json)는 항상 최신을 확인 (Cloudflare·브라우저가 옛 코드를 붙잡지 않게). 아이콘·이미지만 캐시
+      const cache = /\.(html|js|css|json|webmanifest)$/.test(rel) ? 'no-cache' : 'public, max-age=3600';
       return serveFile(res, f, cache);
     } catch (e) {
       return json(res, 400, { error: e.message });

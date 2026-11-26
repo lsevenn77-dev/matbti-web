@@ -96,13 +96,14 @@ function saveDraft() {
   const f = $('#signup-form');
   if (f.dataset.editing === '1') return;
   const d = { gender: f.gender.value, age: f.age.value, job: f.job.value, region: f.region.value, photo: photoData };
-  try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {
-    try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, photo: null })); } catch {}
+  // localStorage: 폰이 사진 앱을 여는 동안 브라우저를 아예 종료해도 남는다
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, photo: null })); } catch {}
   }
 }
 function restoreDraft() {
   let d = null;
-  try { d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null'); } catch {}
+  try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch {}
   if (!d) return;
   const f = $('#signup-form');
   for (const r of f.gender) r.checked = r.value === d.gender;
@@ -130,7 +131,19 @@ $('#photo-input').addEventListener('change', async (e) => {
 });
 
 async function resizePhoto(file, max) {
-  const img = await createImageBitmap(file);
+  // 큰 폰 사진을 원본 크기로 펼치면 메모리가 부족해 페이지가 죽을 수 있어, 가능하면 줄이면서 읽는다
+  let img;
+  try {
+    const probe = await createImageBitmap(file, { resizeWidth: 1024, resizeQuality: 'medium' });
+    img = probe;
+  } catch {
+    img = await new Promise((ok, bad) => {
+      const im = new Image();
+      im.onload = () => ok(im);
+      im.onerror = bad;
+      im.src = URL.createObjectURL(file);
+    });
+  }
   // 정사각형으로 가운데를 잘라 max px 이하로 줄인다 (용량 절약)
   const side = Math.min(img.width, img.height);
   const c = document.createElement('canvas');
@@ -154,7 +167,7 @@ $('#signup-form').addEventListener('submit', async (e) => {
   const j = await r.json();
   if (!r.ok) return ($('#signup-error').textContent = j.error);
   if (!editing) {
-    try { sessionStorage.removeItem(DRAFT_KEY); } catch {}
+    try { localStorage.removeItem(DRAFT_KEY); } catch {}
     st.token = j.token;
     safeSet('nsns_token', j.token);
     st.me = j.me;
