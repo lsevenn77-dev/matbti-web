@@ -94,6 +94,39 @@ systemctl restart nasolneosol
 sleep 2
 systemctl --no-pager --lines=3 status nasolneosol | head -5 || true
 
+say "자동 업데이트 켜기 (2분마다 새 버전 확인, 게임 중이면 끝난 뒤 적용)"
+if [ "${AUTO_UPDATE:-1}" = "1" ]; then
+  cat > /etc/systemd/system/nasolneosol-update.service <<EOF
+[Unit]
+Description=Nasolneosol auto update
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DIR=$DIR
+Environment=BRANCH=$BRANCH
+Environment=PORT=$PORT
+ExecStart=/bin/bash $DIR/nasolneosol/deploy/auto-update.sh
+EOF
+  cat > /etc/systemd/system/nasolneosol-update.timer <<EOF
+[Unit]
+Description=Nasolneosol auto update every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now nasolneosol-update.timer >/dev/null 2>&1
+  echo "  켜짐 (로그: journalctl -u nasolneosol-update -n 20, 끄기: systemctl disable --now nasolneosol-update.timer)"
+else
+  systemctl disable --now nasolneosol-update.timer >/dev/null 2>&1 || true
+  echo "  꺼짐 (AUTO_UPDATE=0)"
+fi
+
 say "방화벽 포트 $PORT 열기"
 if command -v firewall-cmd >/dev/null && systemctl is-active --quiet firewalld; then
   firewall-cmd --permanent --add-port=$PORT/tcp >/dev/null && firewall-cmd --reload >/dev/null && echo "  firewalld 열림"

@@ -152,7 +152,7 @@ export function createServer(opts = {}) {
   // ── HTTP ────────────────────────────────────────────
   const STATIC = path.join(ROOT, 'client', 'public');
   const THREE = path.join(ROOT, 'node_modules', 'three', 'build');
-  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
+  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary', '.wasm': 'application/wasm' };
 
   function serveFile(res, file, cache) {
     fs.readFile(file, (err, buf) => {
@@ -233,6 +233,8 @@ export function createServer(opts = {}) {
           slots: config.slots,
           minAge: config.minAge,
           voice: 'mock',
+          // 자동 업데이트가 게임 중에는 재시작하지 않도록: 사람이 들어 있는 진행 중인 방 수
+          activeRooms: [...rooms.values()].filter(({ room }) => room.phase !== 'ended' && [...room.participants.values()].some((x) => !x.isBot && x.connected)).length,
         });
       }
       if (p === '/api/dev/fill-bots' && req.method === 'POST') {
@@ -262,7 +264,7 @@ export function createServer(opts = {}) {
         // three/examples/jsm (GLTFLoader 등). 경로 밖으로 나가지 못하게 정규화
         const base = path.join(ROOT, 'node_modules', 'three', 'examples', 'jsm');
         const f = path.normalize(path.join(base, p.slice('/vendor/three-addons/'.length)));
-        if (!f.startsWith(base + path.sep) || !f.endsWith('.js')) return json(res, 403, { error: 'forbidden' });
+        if (!f.startsWith(base + path.sep) || !/\.(js|wasm)$/.test(f)) return json(res, 403, { error: 'forbidden' });
         return serveFile(res, f, 'public, max-age=31536000, immutable');
       }
       if (p.startsWith('/vendor/three/')) {

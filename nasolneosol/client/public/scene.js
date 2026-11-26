@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ───────── 월드 배치 (화면 위쪽이 -z) ─────────
@@ -102,6 +103,16 @@ export class GameScene {
       if (this.mobile && this.frameNo++ % 2 === 0) this.renderer.shadowMap.needsUpdate = true;
       this.frame();
     });
+  }
+
+  /** GLTF 로더 (압축 텍스처 KTX2 지원: 폰 그래픽 메모리·발열 감소) */
+  gltfLoader() {
+    const l = new GLTFLoader();
+    if (!this.ktx2) {
+      this.ktx2 = new KTX2Loader().setTranscoderPath('/vendor/three-addons/libs/basis/').detectSupport(this.renderer);
+    }
+    l.setKTX2Loader(this.ktx2);
+    return l;
   }
 
   // ───────── 월드 ─────────
@@ -884,7 +895,7 @@ export class GameScene {
     try {
       list = await fetch('/models/props.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {}));
     } catch { /* 없음 */ }
-    const loader = new GLTFLoader();
+    const loader = this.gltfLoader();
     this.props = {};
     await Promise.all(Object.entries(list).map(async ([id, spec]) => {
       if (id.startsWith('_')) return;
@@ -1100,7 +1111,7 @@ export class GameScene {
     try {
       manifest = await fetch('/models/manifest.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {}));
     } catch { /* 모델 없음 */ }
-    const loader = new GLTFLoader();
+    const loader = this.gltfLoader();
     await Promise.all(Object.entries(manifest).map(async ([cid, entry]) => {
       if (cid.startsWith('_')) return;
       const spec = typeof entry === 'string' ? { url: entry } : entry;
