@@ -90,7 +90,18 @@ export class GameScene {
     this.loadProps();
     this.resize();
     addEventListener('resize', () => this.resize());
-    this.renderer.setAnimationLoop(() => this.frame());
+    // 발열 줄이기 (화질은 그대로):
+    //  1) 90·120Hz 화면 폰에서도 초당 60프레임까지만 그린다 (60Hz 폰은 변화 없음)
+    //  2) 폰에서는 그림자 계산을 두 프레임에 한 번 한다 (그림자 모양·해상도는 같음)
+    if (this.mobile) this.renderer.shadowMap.autoUpdate = false;
+    let lastFrame = 0;
+    this.frameNo = 0;
+    this.renderer.setAnimationLoop((now) => {
+      if (this.mobile && now - lastFrame < 15) return;
+      lastFrame = now;
+      if (this.mobile && this.frameNo++ % 2 === 0) this.renderer.shadowMap.needsUpdate = true;
+      this.frame();
+    });
   }
 
   // ───────── 월드 ─────────
