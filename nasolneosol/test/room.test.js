@@ -272,3 +272,18 @@ test('개발 도구: 다음 단계 건너뛰기로 끝까지 가고, 배속 변�
   while (room.phase !== 'ended' && guard++ < 50) room.devSkip();
   assert.equal(room.phase, 'ended');
 });
+
+test('정상 속도 봇은 단계 시간을 사람처럼 쓰고(첫인상 투표가 바로 끝나지 않음) 끝까지 진행된다', async () => {
+  const { BotDriver } = await import('../server/bots.js');
+  const { room, clock } = setup({}, { voter: 'female' });
+  for (const p of room.participants.values()) p.isBot = true;
+  const bots = new BotDriver(room, { introSec: null, realistic: true, rng: seeded(3) });
+  const step = () => { clock.add(500); bots.tick(); room.tick(); };
+  while (room.phase !== 'firstVote') step();
+  const start = room.now();
+  while (room.phase === 'firstVote') step();
+  assert.ok(room.now() - start > 30_000, `첫인상 투표가 ${(room.now() - start) / 1000}초 만에 끝남`);
+  let guard = 0;
+  while (room.phase !== 'ended' && guard++ < 20_000) step();
+  assert.equal(room.phase, 'ended');
+});

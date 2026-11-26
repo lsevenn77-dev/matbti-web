@@ -82,7 +82,9 @@ export function createServer(opts = {}) {
       return { userId: u.id, profile: u.profile, isBot: u.isBot };
     });
     const room = new Room({ id, config, members, timeScale, voice });
-    const bots = new BotDriver(room, { introSec: Number(env.BOT_INTRO_SEC || 8) });
+    // 정상 속도에서는 봇도 사람처럼 시간을 쓴다 (빨리 넘기려면 화면 위 '다음 단계' 버튼)
+    const realistic = timeScale === 1 && env.BOT_PACE !== 'fast';
+    const bots = new BotDriver(room, { introSec: env.BOT_INTRO_SEC ? Number(env.BOT_INTRO_SEC) : realistic ? null : 8, realistic });
     room.listeners.add((ev) => {
       if (ev.type === 'emote') {
         const msg = { t: 'emote', id: ev.id, kind: ev.kind, x: ev.x, z: ev.z, face: ev.face, y: ev.y };

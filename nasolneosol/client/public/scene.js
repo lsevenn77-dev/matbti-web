@@ -1204,6 +1204,7 @@ export class GameScene {
       c.sit = false;
       c.lookAt = null;
       if (!roaming.has(p.id) || phaseChanged) c.freePose = null;
+      c.roam = roaming.has(p.id);
       let pos;
       if (zone === 'free') {
         const sv = p.id === this.meId && this.localPos ? this.localPos : view.positions[p.id];
@@ -1473,7 +1474,19 @@ export class GameScene {
       const moving = dist > 0.05;
       if (moving) {
         const step = Math.min(dist, Math.max(dt * 5.5, dist * dt * 3));
+        const ox = g.position.x;
+        const oz = g.position.z;
         g.position.addScaledVector(d.normalize(), step);
+        // 돌아다니는 다른 사람(봇 포함)도 벽·가구를 통과하지 않게. 오래 막히면 목적지로 순간이동
+        if (c.roam && id !== this.meId && !c.freePose) {
+          this.pushOutOfHouses(g.position);
+          const moved = Math.hypot(g.position.x - ox, g.position.z - oz);
+          c.stuckT = moved < step * 0.25 ? (c.stuckT ?? 0) + dt : 0;
+          if (c.stuckT > 1.2) {
+            g.position.set(c.target.x, g.position.y, c.target.z);
+            c.stuckT = 0;
+          }
+        }
         c.face = Math.atan2(d.x, d.z);
       } else if (c.lookAt) {
         c.face = Math.atan2(c.lookAt.x - g.position.x, c.lookAt.z - g.position.z);
