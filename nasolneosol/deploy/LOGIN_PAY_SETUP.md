@@ -8,26 +8,32 @@ nano /etc/nasolneosol.env
 systemctl restart nasolneosol
 ```
 
-## 구글 (사이그램 구글 프로젝트 재사용 가능)
-1. Google Cloud Console → API 및 서비스 → 사용자 인증 정보
-2. **웹 애플리케이션** 유형 OAuth 클라이언트 (사이그램 서버용 웹 클라이언트를 같이 써도 되고 새로 만들어도 됨)
-3. 승인된 JavaScript 원본에 `https://nasol.dasi-on.co.kr` 추가
-4. `GOOGLE_OAUTH_CLIENT_IDS=<클라이언트 ID>.apps.googleusercontent.com`
-- 사이그램 프로젝트를 쓰면 로그인 창에 앱 이름이 "사이그램"으로 보인다. 정식 출시 전에는 나솔너솔용 프로젝트를 따로 만드는 것을 권장.
-- 동의 화면이 "테스트" 상태면 등록한 테스트 사용자만 로그인된다.
+로그인 창에 "나솔너솔" 이름이 보이도록 세 곳 모두 **나솔너솔 전용**으로 설정돼 있다 (2026-11-26).
+사이그램 것과 섞지 않는다. 바꾸면 그동안 가입한 사람의 계정 연결이 끊긴다.
 
-## 카카오 (사이그램 앱 ID 1567877 재사용 가능)
-1. developers.kakao.com → 내 애플리케이션 → 앱 설정 → 플랫폼 → **Web** 사이트 도메인에 `https://nasol.dasi-on.co.kr`
-2. 카카오 로그인 → 활성화 ON, **Redirect URI** 에 `https://nasol.dasi-on.co.kr/auth/kakao/callback`
-3. 앱 키의 **REST API 키** → `KAKAO_REST_API_KEY`, 앱 ID → `KAKAO_APP_ID`
-4. (보안 → Client Secret 을 켰다면) `KAKAO_CLIENT_SECRET`
+## 구글 — 프로젝트 `advance-seer-463713-b0` (콘솔 이름 "My First Project")
+- 프로젝트 개수 한도 때문에 새 프로젝트 대신 비어 있던 이 프로젝트를 썼다.
+- 브랜딩: 앱 이름 나솔너솔, 홈페이지·`/privacy.html`·`/terms.html` 링크, 승인된 도메인 `dasi-on.co.kr`
+- 대상: 외부, **프로덕션** (기본 로그인 범위만 써서 심사 없음. 로고를 올리면 브랜드 확인 심사가 필요해진다)
+- 클라이언트: 웹 "Nasolneosol Web", 승인된 JavaScript 원본 `https://nasol.dasi-on.co.kr`
+- `GOOGLE_OAUTH_CLIENT_IDS=<그 클라이언트 ID>`
+
+## 카카오 — 앱 "나솔너솔" (ID 1667926)
+1. 카카오 로그인 → 사용 설정 ON
+2. 앱 → 플랫폼 키 → REST API 키 → 수정 → **카카오 로그인 리다이렉트 URI** 에 `https://nasol.dasi-on.co.kr/auth/kakao/callback`
+3. 같은 화면의 REST API 키 → `KAKAO_REST_API_KEY`, 클라이언트 시크릿(카카오 로그인) → `KAKAO_CLIENT_SECRET`, 앱 ID → `KAKAO_APP_ID=1667926`
 - 회원번호만 쓴다. 이메일·전화번호 동의 항목은 필요 없다.
+- 서버는 REST 방식만 써서 JavaScript 키의 웹 도메인은 필요 없다.
 
-## Apple
-1. Apple Developer → Identifiers → **Services ID** 생성 (예: `kr.dasion.nasol.web`), Sign in with Apple 켜기
+## Apple — Services ID `kr.dasion.nasol.web`
+1. App ID `kr.dasion.nasol` (이름 Nasolneosol, Sign in with Apple 켬)을 기본 앱(Primary App ID)으로 묶었다
 2. Domains: `nasol.dasi-on.co.kr`, Return URLs: `https://nasol.dasi-on.co.kr/`
-3. `APPLE_SIGN_IN_AUDIENCES=<Services ID>`
-- 사이그램은 애플 로그인이 미완성 상태였다. 웹용 Services ID 는 새로 만들어야 한다.
+3. `APPLE_SIGN_IN_AUDIENCES=kr.dasion.nasol.web`
+- 애플은 이름을 영문만 받아서 동의 화면에 "Nasolneosol"로 보인다. 웹 전용이라 아이콘은 애플 기본 아이콘이다.
+
+## 사업자 정보·약관
+- 약관 `/terms.html`, 개인정보처리방침 `/privacy.html`, 환불정책 `/refund.html`
+- 상호·대표·사업자번호·통신판매업 번호·주소·연락처는 `client/public/legal/business.js` 한 곳만 채우면 모든 페이지와 사이트 하단에 반영된다.
 
 ## 나이스페이 (NICEPAY Start API)
 1. 나이스페이 가입·심사 후 개발자 페이지에서 **클라이언트 키 / 시크릿 키** 확인 (심사 전에는 샌드박스 키)
