@@ -35,6 +35,6 @@ await sharp(safe).resize(512).png(png).toFile(`${out}/icon-maskable-512.png`);
 await sharp(full).resize(180).png(png).toFile(`${out}/apple-touch-icon.png`);
 // 카카오·구글 콘솔 업로드용 (저장소 밖으로 내보내지 않는다)
 fs.mkdirSync('scripts/assets/out', { recursive: true });
-await sharp(full).resize(512).png({ compressionLevel: 9 }).toFile('scripts/assets/out/provider-512.png');
-await sharp(full).resize(120).png().toFile('scripts/assets/out/provider-120.png');
+await sharp(full).resize(512).png(png).toFile('scripts/assets/out/provider-512.png');
+await sharp(full).resize(120).png(png).toFile('scripts/assets/out/provider-120.png');
 console.log('icons ok');
