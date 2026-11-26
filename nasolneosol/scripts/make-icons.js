@@ -1,20 +1,40 @@
-// PWA 아이콘 생성 (임시 디자인). npm run icons
+// PWA·로그인 공급자용 아이콘 생성. npm run icons
+// 원본: scripts/assets/icon-source.webp (둥근 카드 + 검은 모서리)
+// 카드만 잘라 낸 뒤, 모서리는 같은 그림을 흐리게 키운 배경으로 채워서 꽉 찬 정사각형으로 만든다.
 import sharp from 'sharp';
 import fs from 'node:fs';
 
-const svg = (pad) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-<rect width="512" height="512" fill="#f6efe4"/>
-<g transform="translate(256 256) scale(${1 - pad}) translate(-256 -256)">
-  <circle cx="190" cy="230" r="92" fill="#6f95c9"/>
-  <circle cx="322" cy="230" r="92" fill="#e0849a"/>
-  <path d="M256 196 c-22-40-86-34-86 12 c0 40 52 70 86 98 c34-28 86-58 86-98 c0-46-64-52-86-12z" fill="#fff"/>
-  <text x="256" y="420" font-family="sans-serif" font-weight="800" font-size="84" text-anchor="middle" fill="#e98a5d">나솔너솔</text>
-</g></svg>`;
+const SRC = 'scripts/assets/icon-source.webp';
+const CARD = { left: 18, top: 18, width: 1212, height: 1217 }; // 원본에서 카드가 차지하는 영역
+const RADIUS = 0.27;   // 카드 모서리 둥글기 (한 변 대비)
+const INSET = 0.012;   // 카드 테두리 선을 지우려고 살짝 안쪽만 쓴다
+const M = 1024;        // 작업 해상도
+
+const card = await sharp(SRC).extract(CARD).resize(M, M).png().toBuffer();
+
+async function square(scale = 1) {
+  const bg = await sharp(card).resize(Math.round(M * 1.25)).extract({ left: Math.round(M * 0.125), top: Math.round(M * 0.125), width: M, height: M })
+    .blur(40).modulate({ brightness: 1.05 }).png().toBuffer();
+  const s = Math.round(M * scale);
+  const i = Math.round(s * INSET);
+  const mask = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}"><rect x="${i}" y="${i}" width="${s - 2 * i}" height="${s - 2 * i}" rx="${s * RADIUS}" fill="#fff"/></svg>`);
+  const fg = await sharp(card).resize(s, s).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
+  const off = Math.round((M - s) / 2);
+  return sharp(bg).composite([{ input: fg, left: off, top: off }]).png().toBuffer();
+}
+
+const full = await square(1);
+const safe = await square(0.82); // maskable: 가운데 80% 원 안에 글자가 들어오게
 
 const out = 'client/public/icons';
 fs.mkdirSync(out, { recursive: true });
-await sharp(Buffer.from(svg(0.04))).resize(192).png().toFile(`${out}/icon-192.png`);
-await sharp(Buffer.from(svg(0.04))).resize(512).png().toFile(`${out}/icon-512.png`);
-await sharp(Buffer.from(svg(0.2))).resize(512).png().toFile(`${out}/icon-maskable-512.png`);
-await sharp(Buffer.from(svg(0.06))).resize(180).png().toFile(`${out}/apple-touch-icon.png`);
+const png = { palette: true, quality: 92, compressionLevel: 9 }; // 색 수만 줄여서 용량 약 1/3
+await sharp(full).resize(192).png(png).toFile(`${out}/icon-192.png`);
+await sharp(full).resize(512).png(png).toFile(`${out}/icon-512.png`);
+await sharp(safe).resize(512).png(png).toFile(`${out}/icon-maskable-512.png`);
+await sharp(full).resize(180).png(png).toFile(`${out}/apple-touch-icon.png`);
+// 카카오·구글 콘솔 업로드용 (저장소 밖으로 내보내지 않는다)
+fs.mkdirSync('scripts/assets/out', { recursive: true });
+await sharp(full).resize(512).png({ compressionLevel: 9 }).toFile('scripts/assets/out/provider-512.png');
+await sharp(full).resize(120).png().toFile('scripts/assets/out/provider-120.png');
 console.log('icons ok');
