@@ -122,6 +122,16 @@ export function validateProfile(input, { minAge, partial = false }) {
     if (!Number.isInteger(age) || age < minAge || age > 80) throw new Error(`나이는 ${minAge}~80 사이 숫자로 입력해 줘`);
     out.age = age;
   }
+  // 만나고 싶은 상대 나이: 내 나이보다 위로·아래로 몇 살까지 (0~40, 40 = 사실상 상관없음)
+  for (const [k, label] of [['ageUp', '위로'], ['ageDown', '아래로']]) {
+    if (input[k] == null || input[k] === '') {
+      if (!partial) out[k] = 40;
+      continue;
+    }
+    const v = Number(input[k]);
+    if (!Number.isInteger(v) || v < 0 || v > 40) throw new Error(`만나고 싶은 나이(${label})는 0~40 사이 숫자로 입력해 줘`);
+    out[k] = v;
+  }
   for (const [k, label, max] of [['job', '직업', 20], ['region', '사는 곳', 20]]) {
     if (!partial || input[k] != null) {
       const v = String(input[k] ?? '').trim();

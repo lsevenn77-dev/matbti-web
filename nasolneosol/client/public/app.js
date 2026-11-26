@@ -80,6 +80,8 @@ function showSignup(editing = false) {
     f.age.value = st.me.profile.age;
     f.job.value = st.me.profile.job;
     f.region.value = st.me.profile.region;
+    f.ageUp.value = st.me.profile.ageUp ?? 40;
+    f.ageDown.value = st.me.profile.ageDown ?? 40;
     for (const r of f.gender) r.checked = r.value === st.me.profile.gender;
     $('#photo-preview').src = st.me.profile.photoUrl;
     $('#photo-preview').hidden = false;
@@ -95,7 +97,7 @@ const DRAFT_KEY = 'nsns_signup_draft';
 function saveDraft() {
   const f = $('#signup-form');
   if (f.dataset.editing === '1') return;
-  const d = { gender: f.gender.value, age: f.age.value, job: f.job.value, region: f.region.value, photo: photoData };
+  const d = { gender: f.gender.value, age: f.age.value, job: f.job.value, region: f.region.value, ageUp: f.ageUp.value, ageDown: f.ageDown.value, photo: photoData };
   // localStorage: 폰이 사진 앱을 여는 동안 브라우저를 아예 종료해도 남는다
   try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, photo: null })); } catch {}
@@ -110,6 +112,8 @@ function restoreDraft() {
   if (d.age) f.age.value = d.age;
   if (d.job) f.job.value = d.job;
   if (d.region) f.region.value = d.region;
+  if (d.ageUp !== undefined && d.ageUp !== '') f.ageUp.value = d.ageUp;
+  if (d.ageDown !== undefined && d.ageDown !== '') f.ageDown.value = d.ageDown;
   if (d.photo) {
     photoData = d.photo;
     $('#photo-preview').src = d.photo;
@@ -156,7 +160,7 @@ $('#signup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   const editing = f.dataset.editing === '1';
-  const body = { gender: f.gender.value, age: Number(f.age.value), job: f.job.value, region: f.region.value };
+  const body = { gender: f.gender.value, age: Number(f.age.value), job: f.job.value, region: f.region.value, ageUp: Number(f.ageUp.value), ageDown: Number(f.ageDown.value) };
   if (photoData) body.photo = photoData;
   if (!editing && !photoData) return ($('#signup-error').textContent = '프로필 사진을 선택해 줘');
   const r = await fetch(editing ? '/api/me' : '/api/signup', {
@@ -189,7 +193,8 @@ function showLobby(status) {
   }
   $('#lobby-photo').src = st.me.profile.photoUrl;
   const p = st.me.profile;
-  $('#lobby-me').textContent = `${G[p.gender]} · ${p.age}세 · ${p.job} · ${p.region}`;
+  const range = p.ageUp == null || (p.ageUp >= 40 && p.ageDown >= 40) ? '나이 상관없음' : `${Math.max(19, p.age - (p.ageDown ?? 40))}~${p.age + (p.ageUp ?? 40)}세와 매칭`;
+  $('#lobby-me').textContent = `${G[p.gender]} · ${p.age}세 · ${p.job} · ${p.region} · ${range}`;
   if (status) {
     $('#q-male').textContent = status.male;
     $('#q-female').textContent = status.female;
@@ -199,9 +204,17 @@ function showLobby(status) {
     $('#btn-queue').dataset.in = status.inQueue ? '1' : '';
     const mine = p.gender;
     const need = status.need[mine] - status[mine];
-    $('#queue-msg').textContent = status.inQueue
-      ? `대기 중이야. ${status.need.male - status.male > 0 ? `남자 ${Math.max(0, status.need.male - status.male)}명` : ''} ${status.need.female - status.female > 0 ? `여자 ${Math.max(0, status.need.female - status.female)}명` : ''} 더 오면 시작해.`
-      : need <= 0 ? `${G[mine]} 자리는 다 찼어. 대기하면 다음 방에 들어가.` : '12명이 모이면 바로 시작해. (선착순)';
+    if (status.inQueue) {
+      // 내 나이 조건과 서로 맞는 사람 기준으로 남은 인원
+      const more = status.more ?? { male: status.need.male - status.male, female: status.need.female - status.female };
+      const parts = [more.male > 0 ? `남자 ${more.male}명` : '', more.female > 0 ? `여자 ${more.female}명` : ''].filter(Boolean);
+      const others = status.total ? status.total.male + status.total.female - status.male - status.female : 0;
+      $('#queue-msg').textContent = parts.length
+        ? `대기 중이야. ${parts.join(', ')} 더 오면 시작해.${others > 0 ? ` (나이 조건이 안 맞는 대기자 ${others}명은 다른 방)` : ''}`
+        : '곧 시작해!';
+    } else {
+      $('#queue-msg').textContent = need <= 0 ? `${G[mine]} 자리는 다 찼어. 대기하면 다음 방에 들어가.` : '12명이 모이면 바로 시작해. (선착순 · 나이 조건이 서로 맞는 사람끼리)';
+    }
   }
   $('#btn-bots').hidden = !st.info?.devTools;
   if (st.info) {

@@ -282,3 +282,9 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
   .toast { bottom: auto; top: calc(64px + var(--safe-t)); }
   #screen-game:has(.chat.min) .toast { bottom: auto; }
 }
+
+/* 가입: 만나고 싶은 나이 */
+.age-range { border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px 6px; margin: 0; }
+.age-range legend { font-size: 13px; padding: 0 4px; }
+.age-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 14px; }
+.age-range .age-row input { width: 60px !important; flex: none; display: inline-block; margin: 0 !important; text-align: center; padding: 8px 6px; }

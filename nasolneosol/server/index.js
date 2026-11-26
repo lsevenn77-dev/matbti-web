@@ -19,6 +19,7 @@ import { Room } from './room.js';
 import { MockVoiceAdapter } from './voice.js';
 import { FileStore, decodeDataUrl, validateProfile } from './store.js';
 import { BotDriver, botProfile, botPhotoSvg } from './bots.js';
+import { formGroup, needFor } from './matcher.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -48,11 +49,25 @@ export function createServer(opts = {}) {
   let botSeq = 0;
 
   // ── 대기열 ──────────────────────────────────────────
+  /** 대기열 + 최신 프로필 (나이 조건 매칭용) */
+  function queueEntries() {
+    return queue.map((q) => ({ ...q, profile: store.get(q.userId)?.profile ?? { age: 0, gender: q.gender } }));
+  }
+
   function queueStatus(userId) {
     const g = { male: 0, female: 0 };
     for (const q of queue) g[q.gender]++;
-    const inQueue = queue.some((q) => q.userId === userId);
-    return { inQueue, male: g.male, female: g.female, need: config.slots };
+    const entries = queueEntries();
+    const me = entries.find((q) => q.userId === userId);
+    const st = { inQueue: !!me, male: g.male, female: g.female, need: config.slots, total: { ...g } };
+    if (me) {
+      // 내 나이 조건과 서로 맞는 사람만 센 인원과 남은 인원
+      const n = needFor(entries, config.slots, me);
+      st.male = n.matched.male;
+      st.female = n.matched.female;
+      st.more = { male: n.male, female: n.female };
+    }
+    return st;
   }
 
   function joinQueue(user) {
@@ -69,12 +84,11 @@ export function createServer(opts = {}) {
   }
 
   function tryFormRoom() {
-    // [임시] 나이 선호는 아직 반영하지 않음 — 순수 선착순 (결정 대기 13번)
-    const pick = (g) => queue.filter((q) => q.gender === g).slice(0, config.slots[g]);
-    const m = pick('male');
-    const f = pick('female');
-    if (m.length < config.slots.male || f.length < config.slots.female) return;
-    const chosen = [...m, ...f];
+    // 선착순 + 나이 조건: 방 안의 모든 남녀 쌍이 서로의 나이 범위 안에 들어야 한다
+    const group = formGroup(queueEntries(), config.slots);
+    if (!group) return;
+    const ids = new Set(group.map((c) => c.userId));
+    const chosen = queue.filter((q) => ids.has(q.userId));
     for (const c of chosen) queue.splice(queue.indexOf(c), 1);
     const id = `r${Date.now().toString(36)}${(++roomSeq).toString(36)}`;
     const members = chosen.map((c) => {
@@ -222,6 +236,9 @@ export function createServer(opts = {}) {
         if (patch.gender && patch.gender !== u.profile.gender) leaveQueue(u.id);
         if (body.photo) patch.photoUrl = store.savePhoto(...Object.values(decodeDataUrl(body.photo)));
         store.updateProfile(u.id, patch);
+        // 나이 조건이 바뀌면 대기열 매칭을 다시 본다
+        tryFormRoom();
+        broadcastQueue();
         return json(res, 200, meResponse(u));
       }
       if (p === '/api/info') {
@@ -239,12 +256,22 @@ export function createServer(opts = {}) {
       }
       if (p === '/api/dev/fill-bots' && req.method === 'POST') {
         if (!devTools) return json(res, 403, { error: 'DEV_TOOLS 꺼짐' });
+        // 대기 중인 사람들의 나이 조건에 모두 맞는 나이로 봇을 만든다 (봇은 나이 조건 없음)
+        const humans = queueEntries().filter((q) => !store.get(q.userId)?.isBot);
+        let lo = config.minAge;
+        let hi = 80;
+        for (const h of humans) {
+          const pf = h.profile;
+          lo = Math.max(lo, pf.age - (Number.isInteger(pf.ageDown) ? pf.ageDown : 99));
+          hi = Math.min(hi, pf.age + (Number.isInteger(pf.ageUp) ? pf.ageUp : 99));
+        }
         const g = { male: 0, female: 0 };
         for (const q of queue) g[q.gender]++;
         for (const gender of ['male', 'female']) {
           for (let i = g[gender]; i < config.slots[gender]; i++) {
             const n = ++botSeq;
             const prof = botProfile(gender, n);
+            if (lo <= hi) prof.age = lo + Math.floor(Math.random() * (hi - lo + 1));
             prof.photoUrl = store.savePhoto(botPhotoSvg(prof.botLabel, n), 'image/svg+xml');
             const bot = store.createUser(prof, { isBot: true });
             queue.push({ userId: bot.id, gender, at: Date.now() });
