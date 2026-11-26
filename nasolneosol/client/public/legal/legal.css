@@ -1,0 +1,28 @@
+/* 약관·개인정보처리방침·환불정책 공통 */
+:root { --bg: #f6efe4; --card: #fffaf2; --ink: #3a2e25; --muted: #8a7a6b; --line: #e6d9c6; --accent: #e98a5d; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; line-height: 1.7; }
+main { max-width: 760px; margin: 0 auto; padding: 28px 18px 48px; }
+.doc { background: var(--card); border-radius: 20px; padding: 24px 22px 28px; box-shadow: 0 6px 20px rgba(80, 55, 30, 0.1); }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.top a.home { color: var(--accent); font-weight: 800; font-size: 20px; text-decoration: none; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tabs a { font-size: 13px; color: var(--muted); text-decoration: none; padding: 4px 10px; border: 1px solid var(--line); border-radius: 99px; background: #fff; }
+.tabs a[aria-current="page"] { color: #fff; background: var(--accent); border-color: var(--accent); }
+h1 { font-size: 24px; margin: 4px 0 2px; }
+.meta { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+h2 { font-size: 17px; margin: 26px 0 6px; padding-top: 14px; border-top: 1px solid var(--line); }
+h2:first-of-type { border-top: 0; padding-top: 0; }
+p, li { font-size: 15px; }
+ul, ol { padding-left: 1.3em; margin: 6px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0; }
+th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: #fff; font-weight: 700; }
+.note { font-size: 13px; color: var(--muted); }
+footer.site-foot { margin-top: 22px; }
+.foot-links { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; font-size: 13px; }
+.foot-links a { color: var(--ink); text-decoration: none; }
+.foot-links span { color: var(--muted); }
+.foot-biz { text-align: center; font-size: 12px; color: var(--muted); line-height: 1.7; margin: 8px 0 0; }
+.foot-biz a { color: var(--muted); }

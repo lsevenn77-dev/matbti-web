@@ -314,3 +314,11 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
 .shop button .best { display: inline-block; font-size: 10px; background: #e98a5d; color: #fff; border-radius: 99px; padding: 0 6px; margin-top: 2px; }
 .card { position: relative; }
 .lobby-sound { position: absolute; top: 14px; right: 14px; }
+
+/* 사이트 하단: 약관 링크 + 사업자 정보 (legal/business.js 가 채움) */
+footer.site-foot { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+.foot-links { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; font-size: 12px; }
+.foot-links a { color: var(--ink); text-decoration: none; }
+.foot-links span { color: var(--muted); }
+.foot-biz { text-align: center; font-size: 11px; color: var(--muted); line-height: 1.6; margin: 6px 0 0; }
+.foot-biz a { color: var(--muted); }
