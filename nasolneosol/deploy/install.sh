@@ -113,7 +113,8 @@ systemctl restart nasolneosol
 sleep 2
 systemctl --no-pager --lines=3 status nasolneosol | head -5 || true
 
-say "자동 업데이트 켜기 (2분마다 새 버전 확인, 게임 중이면 끝난 뒤 적용)"
+UPDATE_EVERY="${UPDATE_EVERY:-2min}"   # 제작 중 2분. 운영 때는 AUTO_UPDATE=0 으로 끄고 수동 배포 권장
+say "자동 업데이트 켜기 ($UPDATE_EVERY 마다 새 버전 확인, 게임 중이면 끝난 뒤 적용)"
 if [ "${AUTO_UPDATE:-1}" = "1" ]; then
   cat > /etc/systemd/system/nasolneosol-update.service <<EOF
 [Unit]
@@ -129,11 +130,11 @@ ExecStart=/bin/bash $DIR/nasolneosol/deploy/auto-update.sh
 EOF
   cat > /etc/systemd/system/nasolneosol-update.timer <<EOF
 [Unit]
-Description=Nasolneosol auto update every 2 minutes
+Description=Nasolneosol auto update every $UPDATE_EVERY
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=2min
+OnUnitActiveSec=$UPDATE_EVERY
 
 [Install]
 WantedBy=timers.target
