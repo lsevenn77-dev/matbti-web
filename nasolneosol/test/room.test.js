@@ -111,6 +111,13 @@ test('자기소개: 발표자 1명만 송출, 소개 후 공개(afterEach), 일�
   const other = room.intro.order[1];
   assert.equal(room.handle(other, { type: 'introDone' }).ok, false);
   assert.equal(room.participants.get(sp).revealed, false);
+  // 소개 마치기 → 1분 질문 시간 (발표자 계속 송출)
+  assert.equal(room.handle(sp, { type: 'introDone' }).ok, true);
+  assert.equal(room.intro.qna, true);
+  assert.equal(room.intro.speakerId, sp);
+  assert.equal(room.voicePerms()[sp].publish, true);
+  assert.equal(room.participants.get(sp).revealed, false);
+  // 질문 받기 마치기 → 공개, 다음 사람
   assert.equal(room.handle(sp, { type: 'introDone' }).ok, true);
   assert.equal(room.participants.get(sp).revealed, true);
   assert.ok(room.viewFor(other).participants.find((p) => p.id === sp).job);
@@ -238,8 +245,8 @@ test('연락처 교환(켰을 때) — 양쪽 모두 동의해야만 공개', ()
   assert.ok(!JSON.stringify(room.viewFor(c)).includes('CONTACT'));
 });
 
-test('기본 설정 예상 시간은 기획서 70분안과 맞다', () => {
-  assert.equal(Math.round(estimateMinutes(makeConfig())), 69); // 표의 '전환 여유 1분' 제외
+test('기본 설정 예상 시간 (투표 1분·데이트 5분·자기소개 1분+질문 1분)', () => {
+  assert.equal(Math.round(estimateMinutes(makeConfig())), 63);
 });
 
 test('데이트 중 숙소에서 기다리는 사람은 돌아다닐 수 있고, 데이트 중인 사람은 못 움직인다', () => {
@@ -286,4 +293,27 @@ test('정상 속도 봇은 단계 시간을 사람처럼 쓰고(첫인상 투표
   let guard = 0;
   while (room.phase !== 'ended' && guard++ < 20_000) step();
   assert.equal(room.phase, 'ended');
+});
+
+test('3차 사다리타기: 각자 칸을 고르고, 공개 전에는 가로줄이 숨겨지며, 결과는 1:1 짝', () => {
+  const { room, clock } = setup({}, { voter: 'female' });
+  runUntil(room, clock, 'randomAssign', 1000, 200_000);
+  const M = males(room);
+  const F = females(room);
+  assert.equal(room.handle(M[0], { type: 'ladder', slot: 2 }).ok, true);
+  assert.equal(room.handle(M[1], { type: 'ladder', slot: 2 }).ok, false); // 이미 고른 칸
+  assert.equal(room.handle(F[0], { type: 'ladder', slot: 2 }).ok, true); // 여자는 아래 칸이라 겹치지 않음
+  assert.equal(room.handle(M[0], { type: 'ladder', slot: 4 }).ok, true); // 바꾸기 가능
+  const v = room.viewFor(M[1]);
+  assert.equal(v.ladder.rungs, null);
+  assert.equal(v.ladder.top[4], M[0]);
+  room.devSkip(); // 공개 전에 넘겨도 배정은 된다
+  assert.equal(room.phase, 'date3');
+  assert.equal(room.dates.date3.length, 6);
+  const all = room.dates.date3.flatMap((g) => g.members);
+  assert.equal(new Set(all).size, 12);
+  // 경로 확인: M[0] 은 4번 칸에서 출발해 도착한 칸의 여자와 짝
+  const dest = room.ladderPath(4);
+  const g = room.dates.date3.find((x) => x.members.includes(M[0]));
+  assert.equal(g.members[1], room.ladder.bottom[dest]);
 });

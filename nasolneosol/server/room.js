@@ -97,6 +97,7 @@ export class Room {
     if (this.phase === 'selfIntro') this.tickIntro(t);
     if (this.phase === 'minigame') this.tickMinigame(t);
     if (this.phase === 'date2Pick') this.tickPick(t);
+    if (this.phase === 'randomAssign') this.tickLadder(t);
     if (this.phaseEndsAt != null && t >= this.phaseEndsAt) this.advance();
   }
 
@@ -108,6 +109,7 @@ export class Room {
     const re = (x) => (x == null ? x : t + Math.max(0, x - t) * k);
     this.phaseEndsAt = re(this.phaseEndsAt);
     if (this.pick?.turnEndsAt != null) this.pick.turnEndsAt = re(this.pick.turnEndsAt);
+    if (this.ladder && !this.ladder.revealed) this.ladder.revealAt = re(this.ladder.revealAt);
     if (this.intro) for (const key of ['speakerEndsAt', 'gapUntil']) if (this.intro[key] != null) this.intro[key] = re(this.intro[key]);
     this.timeScale = scale;
     this.markDirty();
@@ -232,9 +234,26 @@ export class Room {
     it.gapUntil = null;
     it.speakerId = it.order[it.index];
     it.speakerStartedAt = t;
+    it.qna = false;
+    it.qnaStartedAt = null;
     it.speakerEndsAt = t + this.ms(this.cfg.durations.introPerSpeaker);
     this.syncVoice();
     this.markDirty();
+  }
+
+  /** 소개가 끝나면 질문 시간: 청중은 채팅으로 묻고 발표자는 음성으로 답한다 */
+  startQnA(t) {
+    const it = this.intro;
+    it.qna = true;
+    it.qnaStartedAt = t;
+    it.speakerEndsAt = t + this.ms(this.cfg.durations.introQnA);
+    this.markDirty();
+  }
+
+  /** 발표자 시간이 끝났을 때: 소개 → 질문 → 다음 사람 */
+  endSpeakerPart(t) {
+    if (!this.intro.qna && (this.cfg.durations.introQnA ?? 0) > 0) this.startQnA(t);
+    else this.nextSpeaker(t);
   }
 
   tickIntro(t) {
@@ -252,7 +271,7 @@ export class Room {
       this.nextSpeaker(t);
       return;
     }
-    if (t >= it.speakerEndsAt) this.nextSpeaker(t);
+    if (t >= it.speakerEndsAt) this.endSpeakerPart(t);
   }
 
   exit_selfIntro() {
@@ -367,7 +386,93 @@ export class Room {
     this.log('date2Groups', { groups: this.dates.date2.map((g) => g.members) });
   }
 
-  enter_randomAssign() {
+  enter_randomAssign(t) {
+    if (this.cfg.randomDate.mode === 'ladder') return this.startLadder(t);
+    this.autoRandomAssign();
+  }
+
+  // ── 3차 데이트 사다리타기 ──
+  // 남자는 위쪽 출발점, 여자는 아래쪽 도착점을 각자 고른다. 가로줄은 서버가 미리 숨겨 두고 공개 때 보여준다.
+  startLadder(t) {
+    const males = this.byGender('male').map((p) => p.id);
+    const females = this.byGender('female').map((p) => p.id);
+    const cols = Math.max(males.length, females.length);
+    const rows = 9;
+    const rungs = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        // 같은 줄에서 이웃 가로줄이 붙지 않게
+        if (rungs.some(([rr, cc]) => rr === r && cc === c - 1)) continue;
+        if (this.rng() < 0.45) rungs.push([r, c]);
+      }
+    }
+    this.ladder = { cols, rows, rungs, top: {}, bottom: {}, revealed: false, revealAt: this.phaseEndsAt - this.ms(this.cfg.randomDate.ladderRevealSec) };
+    this.dates.date3 = [];
+  }
+
+  /** 사다리 따라 내려가기: 위 칸 → 아래 칸 */
+  ladderPath(col) {
+    const L = this.ladder;
+    let c = col;
+    for (let r = 0; r < L.rows; r++) {
+      if (L.rungs.some(([rr, cc]) => rr === r && cc === c)) c += 1;
+      else if (L.rungs.some(([rr, cc]) => rr === r && cc === c - 1)) c -= 1;
+    }
+    return c;
+  }
+
+  act_ladder(p, { slot }) {
+    if (this.phase !== 'randomAssign' || !this.ladder) return fail('사다리타기 시간이 아니다');
+    const L = this.ladder;
+    if (L.revealed) return fail('이미 결과가 공개됐다');
+    slot = Number(slot);
+    if (!Number.isInteger(slot) || slot < 0 || slot >= L.cols) return fail('잘못된 칸');
+    const side = p.gender === 'male' ? L.top : L.bottom;
+    const owner = Object.entries(side).find(([, v]) => v === p.id);
+    if (side[slot] && side[slot] !== p.id) return fail('이미 다른 사람이 고른 칸');
+    if (owner) delete side[owner[0]];
+    side[slot] = p.id;
+    const n = this.participants.size;
+    if (Object.keys(L.top).length + Object.keys(L.bottom).length >= n) {
+      // 모두 골랐으면 곧 공개
+      L.revealAt = Math.min(L.revealAt, this.now() + this.ms(2));
+    }
+    return { ok: true };
+  }
+
+  revealLadder(t) {
+    const L = this.ladder;
+    if (!L || L.revealed) return;
+    // 안 고른 사람은 남은 칸에 무작위로
+    for (const [gender, side] of [['male', L.top], ['female', L.bottom]]) {
+      const ids = this.byGender(gender).map((p) => p.id).filter((id) => !Object.values(side).includes(id));
+      const free = shuffle([...Array(L.cols).keys()].filter((c) => !side[c]), this.rng);
+      ids.forEach((id, i) => (side[free[i]] = id));
+    }
+    const pairs = [];
+    for (let c = 0; c < L.cols; c++) {
+      const m = L.top[c];
+      const f = L.bottom[this.ladderPath(c)];
+      if (m && f) pairs.push([m, f]);
+    }
+    this.dates.date3 = pairs.map((m, i) => ({ id: `d3-${i}`, members: m }));
+    L.revealed = true;
+    L.revealedAt = t;
+    // 결과 애니메이션을 볼 시간은 남긴다
+    this.phaseEndsAt = Math.max(this.phaseEndsAt, t + this.ms(this.cfg.randomDate.ladderRevealSec));
+    this.log('date3Groups', { groups: pairs, mode: 'ladder' });
+    this.markDirty();
+  }
+
+  tickLadder(t) {
+    if (this.ladder && !this.ladder.revealed && t >= this.ladder.revealAt) this.revealLadder(t);
+  }
+
+  exit_randomAssign() {
+    if (this.ladder && !this.ladder.revealed) this.revealLadder(this.now());
+  }
+
+  autoRandomAssign() {
     const males = this.byGender('male').map((p) => p.id);
     const females = this.byGender('female').map((p) => p.id);
     const prev = (a, b) => this.partnersOf(a, ['date1', 'date2']).has(b);
@@ -441,7 +546,7 @@ export class Room {
   act_introDone(p) {
     if (this.phase !== 'selfIntro' || this.intro.speakerId !== p.id) return fail('발표자가 아니다');
     if (!this.cfg.selfIntro.allowEarlyFinish) return fail('일찍 끝낼 수 없다');
-    this.nextSpeaker(this.now());
+    this.endSpeakerPart(this.now());
     return { ok: true };
   }
 
@@ -698,6 +803,7 @@ export class Room {
         index: it.index,
         speakerId: it.speakerId,
         speakerEndsAt: it.speakerEndsAt,
+        qna: !!it.qna,
         gapUntil: it.gapUntil,
         done: it.done,
         skipped: it.skipped,
@@ -734,6 +840,18 @@ export class Room {
     if (this.phase === 'randomAssign') {
       const ug = this.dates.date3.find((x) => x.members.includes(pid));
       v.upcomingDate = ug ? { id: ug.id, members: ug.members } : null;
+      const L = this.ladder;
+      if (L) {
+        v.ladder = {
+          cols: L.cols,
+          rows: L.rows,
+          top: L.top,
+          bottom: L.bottom,
+          revealed: L.revealed,
+          revealAt: L.revealAt,
+          rungs: L.revealed ? L.rungs : null, // 가로줄은 공개 전까지 숨김
+        };
+      }
     }
     if (this.phase === 'finalChoice') {
       v.final = { myChoice: pid in this.finalVotes ? this.finalVotes[pid] : undefined };

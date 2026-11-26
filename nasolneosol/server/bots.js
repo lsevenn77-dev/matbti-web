@@ -90,11 +90,15 @@ export class BotDriver {
 
       // 자기소개: 봇 차례면 introSec(실제 초) 뒤 종료
       if (r.phase === 'selfIntro' && r.intro?.speakerId === b.id) {
-        const k = r.intro.speakerStartedAt;
-        if (!this.introLen.has(k)) {
-          this.introLen.set(k, this.introSec != null ? this.introSec * 1000 : r.ms(r.cfg.durations.introPerSpeaker * (0.6 + 0.35 * this.rng())));
+        // 소개 → 질문 시간 각각 따로 길이를 정한다
+        const qna = !!r.intro.qna;
+        const start = qna ? r.intro.qnaStartedAt : r.intro.speakerStartedAt;
+        const key = `${r.intro.speakerStartedAt}:${qna}`;
+        if (!this.introLen.has(key)) {
+          const sec = qna ? r.cfg.durations.introQnA : r.cfg.durations.introPerSpeaker;
+          this.introLen.set(key, this.introSec != null ? this.introSec * 1000 : r.ms(sec * (0.6 + 0.35 * this.rng())));
         }
-        if (now - k >= this.introLen.get(k)) r.handle(b.id, { type: 'introDone' });
+        if (now - start >= this.introLen.get(key)) r.handle(b.id, { type: 'introDone' });
         continue;
       }
       // 미니게임: 신호를 본 뒤 반응
@@ -113,6 +117,12 @@ export class BotDriver {
       } else if (r.phase === 'date2Pick' && r.pick?.pickers[r.pick.index] === b.id && decided(b.id)) {
         const opts = r.pickOptions(b.id);
         if (opts.length) r.handle(b.id, { type: 'pick', target: this.pickRandom(opts) });
+      } else if (r.phase === 'randomAssign' && r.ladder && !r.ladder.revealed && decided(b.id)) {
+        const side = b.gender === 'male' ? r.ladder.top : r.ladder.bottom;
+        if (!Object.values(side).includes(b.id)) {
+          const free = [...Array(r.ladder.cols).keys()].filter((c) => !side[c]);
+          if (free.length) r.handle(b.id, { type: 'ladder', slot: this.pickRandom(free) });
+        }
       } else if (r.phase === 'finalChoice' && !(b.id in r.finalVotes) && decided(b.id)) {
         // 만났던 상대를 조금 더 고르는 경향 + 30% 기권
         const met = [...r.partnersOf(b.id, ['date1', 'date2', 'date3'])];

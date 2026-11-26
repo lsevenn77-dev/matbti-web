@@ -417,9 +417,27 @@ function jump() {
   st.scene.applyPose(st.view.me.id, { kind: 'jump' });
   sendEmote({ kind: 'jump' });
 }
-$('#btn-pose').addEventListener('click', togglePose);
-$('#btn-jump').addEventListener('click', jump);
+// 조이스틱을 누른 채로도 누를 수 있게 click 대신 pointerdown (모바일 멀티터치)
+for (const [sel, fn] of [['#btn-pose', togglePose], ['#btn-jump', jump]]) {
+  $(sel).addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    fn();
+  });
+}
 addEventListener('keydown', (e) => {
+  // 엔터: 이동 중에도 바로 채팅 입력. 빈 입력에서 엔터/Esc 면 다시 이동으로
+  if (e.key === 'Enter' && !e.isComposing && $('#screen-game') && !$('#screen-game').hidden && !e.target.closest?.('input, textarea, button')) {
+    e.preventDefault();
+    if (chatMin) $('#btn-chat-toggle').click();
+    $('#chat-input').focus();
+    return;
+  }
+  if (e.target.id === 'chat-input' && (e.key === 'Escape' || (e.key === 'Enter' && !e.isComposing && !e.target.value.trim()))) {
+    e.preventDefault();
+    e.target.blur();
+    return;
+  }
   if (e.target.closest?.('input, textarea')) return;
   if (e.code === 'Space') {
     e.preventDefault();
@@ -482,6 +500,7 @@ const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };
   });
   addEventListener('keyup', (e) => KEYMAP[e.code] && keys.delete(KEYMAP[e.code]));
   addEventListener('blur', () => keys.clear());
+  $('#chat-input').addEventListener('focus', () => keys.clear()); // 채팅 입력 중에는 멈춤
   const loop = (now) => {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
@@ -491,10 +510,32 @@ const joy = { active: false, dx: 0, dz: 0, lastSend: 0 };
       kx *= Math.SQRT1_2;
       kz *= Math.SQRT1_2;
     }
-    const mx = joy.active ? joy.dx : kx;
-    const mz = joy.active ? joy.dz : kz;
+    let mx = joy.active ? joy.dx : kx;
+    let mz = joy.active ? joy.dz : kz;
+    if (mx || mz || !canRoam()) st.walkTo = null; // 조이스틱·키보드가 우선
+    else if (st.walkTo && st.scene?.localPos) {
+      // 땅을 누른 곳까지 걷는 속도로 이동 (벽은 똑같이 막힘)
+      const lp = st.scene.localPos;
+      const ddx = st.walkTo.x - lp.x;
+      const ddz = st.walkTo.z - lp.z;
+      const d = Math.hypot(ddx, ddz);
+      const before = { x: lp.x, z: lp.z };
+      if (d < 0.15) st.walkTo = null;
+      else {
+        mx = ddx / d;
+        mz = ddz / d;
+        st.walkStuck = st.walkStuck ?? 0;
+      }
+      st.walkBefore = before;
+    }
     if (st.scene && canRoam() && (mx || mz)) {
       const p = st.scene.moveLocal(mx, mz, dt);
+      // 누른 곳으로 걷다가 벽에 막히면 멈춘다
+      if (st.walkTo && p && st.walkBefore) {
+        const moved = Math.hypot(p.x - st.walkBefore.x, p.z - st.walkBefore.z);
+        st.walkStuck = moved < dt * 1.0 ? st.walkStuck + dt : 0;
+        if (st.walkStuck > 0.4) st.walkTo = null;
+      }
       if (p && now - joy.lastSend > 120) {
         joy.lastSend = now;
         sendWs({ t: 'act', action: { type: 'move', x: p.x, z: p.z } });
@@ -559,6 +600,10 @@ function renderPanel() {
       h = renderPick();
       break;
     case 'randomAssign':
+      if (v.ladder) {
+        h = renderLadder();
+        break;
+      }
       h = `<div class="box"><h3>랜덤 데이트 배정</h3>${v.upcomingDate ? `<p>다음 데이트 상대:</p><div class="grid">${v.upcomingDate.members.filter((x) => x !== v.me.id).map((id) => pcard(P(id))).join('')}</div>` : '<p>배정 없음</p>'}<p class="muted">가능하면 앞에서 만나지 않은 상대로 배정했어.</p></div>`;
       break;
     case 'finalChoice': {
@@ -593,16 +638,82 @@ function renderIntro(stage) {
   if (it.speakerId) {
     const sp = P(it.speakerId);
     const facts = sp.revealed ? `${sp.age}세 · ${esc(sp.job)} · ${esc(sp.region)}` : '소개가 끝나면 정보가 공개돼';
-    stage.innerHTML = `<img src="${esc(sp.photoUrl)}" alt="${esc(sp.alias)} 프로필 사진" /><div><div class="who">🎙 ${esc(sp.alias)}</div><div class="facts">${facts}</div></div>
+    stage.innerHTML = `<img src="${esc(sp.photoUrl)}" alt="${esc(sp.alias)} 프로필 사진" /><div><div class="who">🎙 ${esc(sp.alias)} <span class="qtag">${it.qna ? '질문 시간' : '소개 중'}</span></div><div class="facts">${facts}</div></div>
       <div class="order">${it.index + 1}/${it.order.length}<br/>다음: ${it.order[it.index + 1] ? esc(name(it.order[it.index + 1])) : '-'}</div>`;
     stage.hidden = false;
   }
   if (it.speakerId === v.me.id) {
-    return `<div class="box"><h3>🎙 내 차례 · 나만 말할 수 있어 (모의)</h3>
-      <p class="muted small">하는 일 · 사는 동네 · 주말 · 이상형. 질문은 채팅으로 와.</p><button class="btn primary" id="btn-intro-done">소개 마치기</button></div>`;
+    if (it.qna) {
+      return `<div class="box"><h3>❓ 질문 시간 · 채팅으로 온 질문에 말로 답해 줘 (모의)</h3>
+        <button class="btn primary" id="btn-intro-done">질문 받기 마치기</button></div>`;
+    }
+    return `<div class="box"><h3>🎙 내 차례 · 1분 자기소개 (모의)</h3>
+      <p class="muted small">하는 일 · 사는 동네 · 주말 · 이상형. 끝나면 1분 질문 시간이 이어져.</p><button class="btn primary" id="btn-intro-done">소개 마치기 → 질문 받기</button></div>`;
   }
   if (!it.speakerId) return `<div class="box"><h3>다음 발표자 준비 중…</h3></div>`;
-  return `<div class="box"><p>${esc(name(it.speakerId))}의 소개를 듣는 중. 궁금한 건 아래 채팅으로 질문해 줘.</p></div>`;
+  if (it.qna) return `<div class="box"><p><b>❓ 질문 시간!</b> ${esc(name(it.speakerId))}에게 궁금한 걸 아래 채팅으로 물어봐.</p></div>`;
+  return `<div class="box"><p>${esc(name(it.speakerId))}의 소개를 듣는 중. 소개가 끝나면 1분 질문 시간이 있어.</p></div>`;
+}
+
+// ───────────── 3차 데이트 사다리타기 ─────────────
+function ladderPath(L, col) {
+  const pts = [[col, -1]];
+  let c = col;
+  for (let r = 0; r < L.rows; r++) {
+    pts.push([c, r]);
+    if (L.rungs.some(([rr, cc]) => rr === r && cc === c)) c += 1;
+    else if (L.rungs.some(([rr, cc]) => rr === r && cc === c - 1)) c -= 1;
+    pts.push([c, r]);
+  }
+  pts.push([c, L.rows]);
+  return { end: c, pts };
+}
+function renderLadder() {
+  const v = st.view;
+  const L = v.ladder;
+  const male = v.me.gender === 'male';
+  const W = 48;
+  const X = (c) => 24 + c * W;
+  const Y = (r) => (r < 0 ? 26 : r >= L.rows ? 174 : 34 + (r + 0.5) * (132 / L.rows));
+  const w = 48 + (L.cols - 1) * W;
+  const mySide = male ? L.top : L.bottom;
+  const mySlot = Object.keys(mySide).find((k) => mySide[k] === v.me.id);
+  let svg = '';
+  for (let c = 0; c < L.cols; c++) svg += `<line x1="${X(c)}" y1="26" x2="${X(c)}" y2="174" class="lv"/>`;
+  let myPath = '';
+  let partner = null;
+  if (L.revealed && L.rungs) {
+    for (const [r, c] of L.rungs) svg += `<line x1="${X(c)}" y1="${Y(r)}" x2="${X(c + 1)}" y2="${Y(r)}" class="lh"/>`;
+    // 내 경로 강조 (남자는 위에서, 여자는 내 도착 칸으로 오는 출발점을 찾아서)
+    let start = null;
+    if (male && mySlot != null) start = Number(mySlot);
+    if (!male && mySlot != null) for (let c = 0; c < L.cols; c++) if (ladderPath(L, c).end === Number(mySlot)) start = c;
+    if (start != null) {
+      const { end, pts } = ladderPath(L, start);
+      myPath = `<polyline class="lpath" points="${pts.map(([c, r]) => `${X(c)},${Y(r)}`).join(' ')}"/>`;
+      partner = male ? L.bottom[end] : L.top[start];
+    }
+  }
+  const label = (id, c, mine) => (id ? esc(name(id)) : `${c + 1}번`) + (mine ? ' (나)' : '');
+  const slots = (side, y, isMine) => {
+    let out = '';
+    for (let c = 0; c < L.cols; c++) {
+      const id = side[c];
+      const mine = id === v.me.id;
+      const can = isMine && !L.revealed && (!id || mine);
+      out += `<g class="lslot${mine ? ' mine' : ''}${id && !mine ? ' taken' : ''}${can ? ' can' : ''}" ${can ? `data-slot="${c}"` : ''}>
+        <rect x="${X(c) - 22}" y="${y - 11}" width="44" height="22" rx="11"/><text x="${X(c)}" y="${y + 4}">${label(id, c, mine)}</text></g>`;
+    }
+    return out;
+  };
+  svg += myPath + slots(L.top, 12, male) + slots(L.bottom, 188, !male);
+  const left = Math.max(0, Math.ceil((L.revealAt - serverNow()) / 1000));
+  const head = L.revealed
+    ? partner ? `🎉 3차 데이트 상대: <b>${esc(name(partner))}</b>` : '결과 공개!'
+    : `🪜 ${male ? '위쪽 출발점' : '아래쪽 도착점'}을 골라 줘 · 모두 고르거나 시간이 되면 공개`;
+  return `<div class="box ladder"><h3>${head}</h3>
+    <svg viewBox="0 0 ${w} 200" class="ladder-svg" role="img" aria-label="사다리타기">${svg}</svg>
+    <p class="muted small">${L.revealed ? '가로줄은 공개 순간 처음 보여. 서로 고른 칸이 짝을 정했어.' : `${mySlot != null ? `${Number(mySlot) + 1}번 칸 선택됨 · 바꿀 수 있어` : '아직 안 골랐어 · 안 고르면 남은 칸에 자동 배정'}${left ? ` · 공개까지 약 ${left}초` : ''}`}</p></div>`;
 }
 
 function renderPick() {
@@ -688,6 +799,7 @@ function bindPanel() {
       } else openProfile(c.dataset.pid);
     });
   }
+  for (const g of document.querySelectorAll('#panel .lslot.can')) g.addEventListener('click', () => act({ type: 'ladder', slot: Number(g.dataset.slot) }));
   $('#btn-submit')?.addEventListener('click', () => act({ type: 'vote', target: st.selected }));
   $('#btn-abstain')?.addEventListener('click', () => act({ type: 'vote', target: null }));
   $('#btn-intro-done')?.addEventListener('click', () => act({ type: 'introDone' }));
@@ -718,7 +830,10 @@ function openProfile(pid) {
 }
 
 function tapFloor(x, z) {
-  if (canRoam()) act({ type: 'move', x, z });
+  if (canRoam()) {
+    st.walkTo = { x, z };
+    st.walkStuck = 0;
+  }
   $('#profile-card').hidden = true;
 }
 
@@ -786,6 +901,8 @@ $('#chat-form').addEventListener('submit', (e) => {
   if (!i.value.trim() || !st.channel) return;
   act({ type: 'chat', channel: st.channel, text: i.value });
   i.value = '';
+  // PC: 보내면 다시 이동 (폰은 키보드를 유지)
+  if (!matchMedia('(pointer: coarse)').matches) i.blur();
 });
 
 let toastTimer;

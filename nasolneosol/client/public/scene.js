@@ -18,8 +18,8 @@ const DATE_SPOTS = [
   { x: -9.6, z: -11.8, label: '개울 벤치', kind: 'bench', rot: 0.35 },
   { x: 9.6, z: -11.8, label: '개울 벤치', kind: 'bench', rot: -0.35 },
   { x: 0, z: -15.6, label: '나무 다리', kind: 'bridge', rot: 0 },
-  { x: -16, z: -17, label: '테라스', kind: 'table', rot: 0 },
-  { x: 16, z: -17, label: '그네', kind: 'swing', rot: 0 },
+  { x: -16, z: -21, label: '테라스', kind: 'table', rot: 0 },
+  { x: 16, z: -21, label: '그네', kind: 'swing', rot: 0 },
   { x: 0, z: -22, label: '언덕 정원', kind: 'table', rot: 0 },
 ];
 DATE_SPOTS.forEach((s, i) => (ZONES[`date:${i}`] = { x: s.x, z: s.z, r: 1.4, label: s.label }));
@@ -64,13 +64,15 @@ export class GameScene {
     this.canvas = canvas;
     this.onTapCharacter = onTapCharacter;
     this.onTapFloor = onTapFloor;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // 폰(터치 기기)은 발열·배터리를 위해 해상도·그림자·프레임을 낮춘다
+    this.mobile = matchMedia('(pointer: coarse)').matches;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !this.mobile, powerPreference: this.mobile ? 'low-power' : 'default' });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.mobile ? 1.25 : 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = this.mobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 220);
     this.camTarget = new THREE.Vector3(0, 0, 0);
@@ -88,7 +90,13 @@ export class GameScene {
     this.loadProps();
     this.resize();
     addEventListener('resize', () => this.resize());
-    this.renderer.setAnimationLoop(() => this.frame());
+    // 폰은 초당 30프레임으로 제한 (발열 감소)
+    let lastFrame = 0;
+    this.renderer.setAnimationLoop((now) => {
+      if (this.mobile && now - lastFrame < 31) return;
+      lastFrame = now;
+      this.frame();
+    });
   }
 
   // ───────── 월드 ─────────
@@ -110,7 +118,7 @@ export class GameScene {
     const sun = new THREE.DirectionalLight('#fff3dd', 2.4);
     sun.position.set(12, 22, 14);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(this.mobile ? 512 : 1024, this.mobile ? 512 : 1024);
     sun.shadow.camera.left = -22;
     sun.shadow.camera.right = 22;
     sun.shadow.camera.top = 22;
@@ -420,6 +428,9 @@ export class GameScene {
       const p = curve.getPoint(t);
       for (const side of [-1, 1]) {
         if (Math.abs(p.x) < 1.8) continue;
+        const rz = p.z + side * 1.9;
+        // 데이트 장소(데크·의자)와 겹치는 돌은 두지 않는다
+        if (DATE_SPOTS.some((d) => d.kind !== 'bridge' && Math.hypot(d.x - p.x, d.z - rz) < 3.2)) continue;
         const r = mesh(new THREE.DodecahedronGeometry(0.35 + rng() * 0.3, 0), rng() < 0.5 ? '#9a9a96' : '#a9a7a1', { receive: true });
         r.position.set(p.x + (rng() - 0.5) * 0.6, 0.12, p.z + side * (1.75 + rng() * 0.3));
         r.scale.y = 0.55;
@@ -1358,6 +1369,14 @@ export class GameScene {
     const seats = [];
     for (const ch of this.chairs ?? []) seats.push({ kind: 'sit', label: '앉기', x: ch.x, z: ch.z, face: Math.atan2(0 - ch.x, 2.2 - ch.z), y: 0.05 });
     for (const { d } of this.dateSpotGroups ?? []) {
+      if (d.kind === 'table') {
+        // 카페 탁자 양옆 의자
+        for (const sx of [-1, 1]) {
+          const ox = sx * 1.0;
+          seats.push({ kind: 'sit', label: '앉기', x: d.x + Math.cos(d.rot) * ox, z: d.z - Math.sin(d.rot) * ox, face: d.rot + (sx < 0 ? Math.PI / 2 : -Math.PI / 2), y: 0.2 });
+        }
+        continue;
+      }
       if (d.kind !== 'bench' && d.kind !== 'swing') continue;
       const cx = d.x;
       const cz = d.z - 0.6;
@@ -1389,7 +1408,7 @@ export class GameScene {
     if (!this.freeRoam || !this.localPos) return null;
     this.seats ?? this.buildSeats();
     let best = null;
-    let bd = 1.3;
+    let bd = 1.6;
     for (const st of this.seats) {
       const dd = Math.hypot(st.x - this.localPos.x, st.z - this.localPos.z);
       if (dd < bd) {

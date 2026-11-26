@@ -252,3 +252,33 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
   #screen-game:has(.chat.min) .toast { bottom: 48px; }
   .toast { bottom: 118px; }
 }
+.intro-stage .qtag { font-size: 10px; font-weight: 700; background: #f8cd4a; color: #3a2e25; border-radius: 99px; padding: 1px 6px; margin-left: 4px; vertical-align: middle; }
+
+/* 사다리타기 */
+.ladder-svg { width: 100%; height: auto; display: block; margin-top: 4px; }
+.ladder-svg .lv { stroke: #b99a7a; stroke-width: 3; stroke-linecap: round; }
+.ladder-svg .lh { stroke: #b99a7a; stroke-width: 3; stroke-linecap: round; animation: lh-in .4s ease-out both; }
+.ladder-svg .lpath { fill: none; stroke: #e98a5d; stroke-width: 5; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: lpath 3s .5s ease-in-out forwards; }
+.ladder-svg .lslot rect { fill: #fff; stroke: var(--line); stroke-width: 1.5; }
+.ladder-svg .lslot text { font-size: 10px; text-anchor: middle; fill: var(--ink); font-weight: 700; }
+.ladder-svg .lslot.can { cursor: pointer; }
+.ladder-svg .lslot.can rect { stroke: #e98a5d; }
+.ladder-svg .lslot.taken rect { fill: #efe6da; }
+.ladder-svg .lslot.taken text { fill: var(--muted); font-weight: 500; }
+.ladder-svg .lslot.mine rect { fill: #e98a5d; stroke: #c86f45; }
+.ladder-svg .lslot.mine text { fill: #fff; }
+@keyframes lpath { to { stroke-dashoffset: 0; } }
+@keyframes lh-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* 점프·앉기 버튼: 채팅창 오른쪽 위 */
+.actions { flex-direction: row-reverse; right: 16px; bottom: calc(166px + var(--safe-b)); }
+@media (min-width: 900px) {
+  .actions { right: 16px; bottom: 328px; }
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .actions { right: 8px; bottom: 120px; flex-direction: row-reverse; }
+  .actions .act { width: 50px; height: 50px; }
+  #screen-game:has(.chat.min) .actions { right: 8px; bottom: 52px; flex-direction: row-reverse; }
+  .toast { bottom: auto; top: calc(64px + var(--safe-t)); }
+  #screen-game:has(.chat.min) .toast { bottom: auto; }
+}

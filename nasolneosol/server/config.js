@@ -40,15 +40,16 @@ export const DEFAULT_CONFIG = {
   // 각 단계 길이 (초). 기획서 05장 70분 비교안을 기본값으로 사용 — 전부 [임시]
   durations: {
     intro: 60, //               입장 안내 + 선택 성별 추첨 발표
-    firstVote: 180, //          첫인상 투표  (안내+투표 합계 4분 안)
-    date1: 420, //              1차 첫인상 데이트 7분
+    firstVote: 60, //           첫인상 투표 1분 (안내 1분 + 투표 1분)
+    date1: 300, //              1차 첫인상 데이트 5분
     freeRoam: 300, //           [확정] 자유 구경 5분
-    introPerSpeaker: 120, //    자기소개 1인 시간. 2분/2분30초/3분 비교 대상 (결정 대기 2번)
+    introPerSpeaker: 60, //     자기소개 1인 1분
+    introQnA: 60, //            소개 뒤 질문 받는 시간 1분 (발표자는 음성으로 답, 질문은 채팅)
     introGap: 10, //            발표자 교대 (12명 × 10초 = 2분)
     minigame: 150, //           미니게임 전체 제한
     date2Pick: 210, //          데이트 상대 선택 (미니게임+선택 합계 6분 안)
-    date2: 480, //              2차 데이트 8분
-    randomAssign: 60, //        랜덤 배정 발표 1분
+    date2: 300, //              2차 데이트 5분
+    randomAssign: 90, //        3차 사다리타기: 출발점 고르기 + 결과 공개 (끝 20초가 공개)
     date3: 480, //              3차 데이트 8분
     finalChoice: 180, //        최종 선택
     result: 60, //              결과 확인
@@ -98,7 +99,9 @@ export const DEFAULT_CONFIG = {
   // 3차 랜덤 데이트 (결정 대기 1번) — 원안 유지, 삭제는 검토 중
   randomDate: {
     enabled: true, //               [임시] 원안 3회 기준
-    avoidPreviousPartners: true, // [임시] 이전에 만난 상대 회피 우선
+    mode: 'ladder', //             [임시] 'ladder' 각자 사다리 출발점을 골라 짝 결정 | 'auto' 서버가 무작위 배정
+    ladderRevealSec: 20, //        사다리 결과 공개(애니메이션) 시간
+    avoidPreviousPartners: true, // [임시] auto 모드: 이전에 만난 상대 회피 우선
   },
 
   // 최종 선택 (결정 대기 8번)
@@ -122,7 +125,7 @@ export const PRESETS = {
   twoDates: {
     randomDate: { enabled: false },
     date2: { mode: 'allPickOrder' },
-    durations: { introPerSpeaker: 150 },
+    durations: { introPerSpeaker: 150, introQnA: 0 },
   },
 };
 
@@ -145,7 +148,7 @@ export function makeConfig(...overrides) {
 export function estimateMinutes(cfg) {
   const d = cfg.durations;
   const n = cfg.slots.male + cfg.slots.female;
-  let s = d.intro + d.firstVote + d.date1 + d.freeRoam + n * (d.introPerSpeaker + d.introGap)
+  let s = d.intro + d.firstVote + d.date1 + d.freeRoam + n * (d.introPerSpeaker + (d.introQnA ?? 0) + d.introGap)
     + d.minigame + d.date2Pick + d.date2 + d.finalChoice + d.result;
   if (cfg.randomDate.enabled) s += d.randomAssign + d.date3;
   if (cfg.contactExchange.enabled) s += d.contact;
