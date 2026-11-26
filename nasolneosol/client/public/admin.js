@@ -1,0 +1,186 @@
+// 나솔너솔 관리자 화면: 신고 확인·처리, 이용 정지·해제
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const KEY_SLOT = 'nsns_admin_key'; // 세션 저장소: 창을 닫으면 사라진다
+let tab = 'open';
+
+const CONTEXT = { dm: '1:1 대화', met: '함께한 사람 목록', game: '게임 중', other: '기타' };
+const G = { male: '남', female: '여' };
+const when = (t) => (t ? new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'x-admin-key': sessionStorage.getItem(KEY_SLOT) ?? '' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 || r.status === 503 || r.status === 429) {
+    logout(j.error);
+    throw new Error(j.error);
+  }
+  if (!r.ok) throw new Error(j.error || '실패했어');
+  return j;
+}
+function toast(t) {
+  const el = $('#toast');
+  el.textContent = t;
+  el.hidden = false;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => (el.hidden = true), 2500);
+}
+
+// ── 로그인 ──
+function showLogin(err = '') {
+  $('#login').hidden = false;
+  $('#panel').hidden = true;
+  $('#btn-refresh').hidden = $('#btn-logout').hidden = true;
+  $('#login-err').textContent = err;
+  $('#key').focus();
+}
+function logout(err) {
+  sessionStorage.removeItem(KEY_SLOT);
+  showLogin(err);
+}
+$('#login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  sessionStorage.setItem(KEY_SLOT, $('#key').value.trim());
+  $('#key').value = '';
+  try {
+    await api('/api/admin/summary');
+    openPanel();
+  } catch { /* logout 이 안내한다 */ }
+});
+$('#btn-logout').addEventListener('click', () => logout(''));
+$('#btn-refresh').addEventListener('click', () => load());
+
+// ── 관리 ──
+function openPanel() {
+  $('#login').hidden = true;
+  $('#panel').hidden = false;
+  $('#btn-refresh').hidden = $('#btn-logout').hidden = false;
+  load();
+}
+for (const b of document.querySelectorAll('#tabs button')) {
+  b.addEventListener('click', () => {
+    tab = b.dataset.tab;
+    for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
+    load();
+  });
+}
+
+async function load() {
+  try {
+    const s = await api('/api/admin/summary');
+    $('#stats').innerHTML = [
+      ['회원', s.users], ['접속 중', s.online], ['대기 중', s.queue], ['진행 중인 방', s.rooms], ['처리할 신고', s.reportsOpen, s.reportsOpen ? 'hot' : ''], ['정지 중', s.banned],
+    ].map(([l, v, c]) => `<div class="stat ${c ?? ''}"><b>${v}</b><span>${l}</span></div>`).join('');
+    if (tab === 'banned') return renderBanned(await api('/api/admin/banned'));
+    renderReports(await api(`/api/admin/reports?status=${tab}`));
+  } catch (err) {
+    if (!$('#panel').hidden) toast(err.message);
+  }
+}
+
+function person(c, label) {
+  if (!c || c.deleted) return `<div class="person gone"><span class="who">${label}</span><span>탈퇴한 회원</span></div>`;
+  const ban = c.ban ? `<span class="tag red">정지 중 ${c.ban.until ? `~${when(c.ban.until)}` : '(영구)'}</span>` : '';
+  const flags = [c.online ? '<span class="tag green">접속 중</span>' : '', c.inGame ? '<span class="tag">게임 중</span>' : '', c.isBot ? '<span class="tag">봇</span>' : ''].join('');
+  return `<div class="person">
+    <img src="${esc(c.photoUrl)}" alt="" loading="lazy" />
+    <div>
+      <span class="who">${label}</span>
+      <div class="line"><b>${G[c.gender] ?? ''} · ${c.age}세</b> · ${esc(c.job)} · ${esc(c.region)} ${flags}${ban}</div>
+      <div class="line muted">가입 ${when(c.createdAt)} · 로그인 ${c.linked.length ? esc(c.linked.join(', ')) : '없음'} · 받은 신고 <b class="${c.reportsAgainst >= 3 ? 'redtxt' : ''}">${c.reportsAgainst}건</b> · <code>${esc(c.id.slice(0, 8))}</code></div>
+    </div>
+  </div>`;
+}
+
+function evidence(r) {
+  const ev = r.evidence;
+  if (!ev) return '';
+  if (ev.messages) {
+    if (!ev.messages.length) return '<p class="muted small">대화 기록 없음</p>';
+    return `<div class="ev"><div class="ev-title">최근 1:1 대화</div>${ev.messages.map((m) => `<div class="msg ${m.from === 'target' ? 'them' : 'me'}"><span>${m.from === 'target' ? '신고 대상' : '신고자'}</span>${esc(m.text)}<time>${when(m.at)}</time></div>`).join('')}</div>`;
+  }
+  if (ev.chat) {
+    if (!ev.chat.length) return `<p class="muted small">게임 가명 ${esc(ev.alias)} · 채팅 기록 없음</p>`;
+    return `<div class="ev"><div class="ev-title">게임 채팅 (가명 ${esc(ev.alias)})</div>${ev.chat.map((m) => `<div class="msg them"><span>${esc(m.channel)}</span>${esc(m.text)}<time>${when(m.at)}</time></div>`).join('')}</div>`;
+  }
+  return '';
+}
+
+function renderReports(list) {
+  if (!list.length) return ($('#list').innerHTML = '<p class="empty">해당하는 신고가 없어.</p>');
+  $('#list').innerHTML = list.map((r) => `
+    <article class="card report" data-id="${r.id}">
+      <div class="r-head">
+        <span class="reason">${esc(r.reasonLabel)}</span>
+        <span class="muted">${CONTEXT[r.context] ?? r.context} · ${when(r.at)}</span>
+        <span class="status s-${r.status}">${{ open: '접수', resolved: '처리 완료', dismissed: '기각' }[r.status]}</span>
+      </div>
+      ${r.detail ? `<p class="detail">“${esc(r.detail)}”</p>` : ''}
+      <div class="people">${person(r.targetCard, '신고 대상')}${person(r.reporterCard, '신고한 사람')}</div>
+      ${evidence(r)}
+      ${r.handledAt ? `<p class="muted small">처리 ${when(r.handledAt)}${r.action ? ` · ${esc(r.action)}` : ''}${r.note ? ` · 메모: ${esc(r.note)}` : ''}</p>` : ''}
+      <div class="acts">
+        <input class="note" placeholder="처리 메모 (선택)" maxlength="500" value="${esc(r.note ?? '')}" />
+        ${r.targetCard?.deleted ? '' : `
+        <select class="days">
+          <option value="1">1일 정지</option><option value="7" selected>7일 정지</option><option value="30">30일 정지</option><option value="0">영구 정지</option>
+        </select>
+        <input class="reason-in" placeholder="정지 사유 (대상에게 보여요)" maxlength="200" value="${esc(r.reasonLabel)}" />
+        <button type="button" class="red" data-act="ban">정지하고 처리 완료</button>`}
+        ${r.status !== 'resolved' ? '<button type="button" class="pk" data-act="resolve">처리 완료</button>' : ''}
+        ${r.status !== 'dismissed' ? '<button type="button" class="ghost" data-act="dismiss">기각</button>' : ''}
+        ${r.status !== 'open' ? '<button type="button" class="ghost" data-act="reopen">다시 접수로</button>' : ''}
+      </div>
+    </article>`).join('');
+  for (const card of document.querySelectorAll('.report')) {
+    const id = card.dataset.id;
+    const r = list.find((x) => x.id === id);
+    for (const b of card.querySelectorAll('[data-act]')) {
+      b.onclick = async () => {
+        const note = card.querySelector('.note').value;
+        b.disabled = true;
+        try {
+          if (b.dataset.act === 'ban') {
+            const days = Number(card.querySelector('.days').value);
+            await api('/api/admin/ban', { userId: r.target, days: days || null, reason: card.querySelector('.reason-in').value, reportId: id, note });
+            toast(days ? `${days}일 정지했어` : '영구 정지했어');
+          } else {
+            const status = { resolve: 'resolved', dismiss: 'dismissed', reopen: 'open' }[b.dataset.act];
+            await api(`/api/admin/reports/${id}`, { status, note });
+            toast('바꿨어');
+          }
+          load();
+        } catch (err) {
+          toast(err.message);
+          b.disabled = false;
+        }
+      };
+    }
+  }
+}
+
+function renderBanned(list) {
+  if (!list.length) return ($('#list').innerHTML = '<p class="empty">정지된 회원이 없어.</p>');
+  $('#list').innerHTML = list.map((c) => `
+    <article class="card" data-id="${esc(c.id)}">
+      ${person(c, '정지된 회원')}
+      <p class="small">사유: ${esc(c.ban?.reason)} · 정지 ${when(c.ban?.at)} · ${c.ban?.until ? `${when(c.ban.until)}까지` : '영구'}</p>
+      <div class="acts"><button type="button" class="ghost" data-act="unban">정지 해제</button></div>
+    </article>`).join('');
+  for (const b of document.querySelectorAll('[data-act="unban"]')) {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api('/api/admin/unban', { userId: b.closest('.card').dataset.id });
+        toast('정지를 풀었어');
+        load();
+      } catch (err) {
+        toast(err.message);
+        b.disabled = false;
+      }
+    };
+  }
+}
+
+if (sessionStorage.getItem(KEY_SLOT)) openPanel();
+else showLogin();

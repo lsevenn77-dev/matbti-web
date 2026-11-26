@@ -25,7 +25,7 @@ import { socialConfig, verifyGoogle, verifyApple, verifyKakaoCode, kakaoAuthoriz
 import { payConfig, newOrderId, niceApprove } from './payments.js';
 import { Relations, RelationError } from './relations.js';
 import { Reports, ReportError, REPORT_REASONS } from './reports.js';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -44,6 +44,7 @@ export function createServer(opts = {}) {
   const voice = new MockVoiceAdapter({ log: env.VOICE_LOG === '1' });
   const relations = new Relations(store.dir);
   const reports = new Reports(store.dir);
+  reports.purgeOld(); // 처리 완료 후 1년 지난 신고 기록 정리
 
   const social = socialConfig(env);
   const pay = payConfig(env);
@@ -291,6 +292,87 @@ export function createServer(opts = {}) {
     send(p.userId, { t: 'state', view: room.viewFor(p.id) });
   }
 
+  // ── 관리자 (신고 처리 · 이용 정지) ──
+  // 서버 설정 ADMIN_KEY (24자 이상) 를 아는 사람만. 화면: /admin.html
+  const adminKey = String(env.ADMIN_KEY ?? '');
+  const adminFails = new Map(); // ip → [시각]
+  function adminOk(req) {
+    if (adminKey.length < 24) return { ok: false, code: 503, error: '관리자 키가 설정돼 있지 않아 (서버 ADMIN_KEY)' };
+    const ip = String(req.headers['cf-connecting-ip'] ?? req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim();
+    const now = Date.now();
+    const fails = (adminFails.get(ip) ?? []).filter((t) => now - t < 10 * 60 * 1000);
+    if (fails.length >= 10) return { ok: false, code: 429, error: '잘못된 시도가 많아. 10분 뒤 다시 해 줘' };
+    const given = Buffer.from(String(req.headers['x-admin-key'] ?? ''));
+    const want = Buffer.from(adminKey);
+    if (given.length !== want.length || !timingSafeEqual(given, want)) {
+      fails.push(now);
+      adminFails.set(ip, fails);
+      return { ok: false, code: 401, error: '관리자 키가 맞지 않아' };
+    }
+    return { ok: true };
+  }
+  /** 관리자가 보는 회원 정보 */
+  function adminCard(id) {
+    const u = store.get(id);
+    if (!u) return { id, deleted: true };
+    const p = u.profile;
+    return {
+      id: u.id, gender: p.gender, age: p.age, job: p.job, region: p.region, photoUrl: p.photoUrl,
+      createdAt: u.createdAt, linked: (u.identities ?? []).map((k) => k.split(':')[0]), isBot: !!u.isBot,
+      online: isOnline(u.id), inGame: userRoom.has(u.id), ban: banOf(u), reportsAgainst: reports.countAgainst(u.id),
+    };
+  }
+  async function handleAdmin(req, res, p, url) {
+    const a = adminOk(req);
+    if (!a.ok) return json(res, a.code, { error: a.error });
+    if (p === '/api/admin/summary' && req.method === 'GET') {
+      const users = [...store.users.values()].filter((u) => !u.isBot);
+      return json(res, 200, {
+        users: users.length,
+        online: users.filter((u) => isOnline(u.id)).length,
+        queue: queue.length,
+        rooms: [...rooms.values()].filter(({ room }) => room.phase !== 'ended').length,
+        reportsOpen: reports.list.filter((r) => r.status === 'open').length,
+        banned: users.filter((u) => banOf(u)).length,
+      });
+    }
+    if (p === '/api/admin/reports' && req.method === 'GET') {
+      const status = url.searchParams.get('status') || 'open';
+      const list = reports.list.filter((r) => status === 'all' || r.status === status).slice().reverse().slice(0, 200);
+      return json(res, 200, list.map((r) => ({ ...r, reporterCard: adminCard(r.reporter), targetCard: adminCard(r.target) })));
+    }
+    if (p === '/api/admin/banned' && req.method === 'GET') {
+      return json(res, 200, [...store.users.values()].filter((u) => banOf(u)).map((u) => adminCard(u.id)));
+    }
+    if (req.method !== 'POST') return json(res, 405, { error: 'method' });
+    const body = await readBody(req, 8 * 1024);
+    try {
+      let m;
+      if ((m = /^\/api\/admin\/reports\/([0-9a-f]{12})$/.exec(p))) {
+        return json(res, 200, reports.update(m[1], { status: body.status, note: body.note }));
+      }
+      if (p === '/api/admin/ban') {
+        const days = body.days === null || body.days === 0 ? null : Number(body.days);
+        if (days !== null && !(days > 0 && days <= 3650)) return json(res, 400, { error: '정지 기간이 이상해' });
+        const ban = applyBan(String(body.userId ?? ''), { days, reason: body.reason });
+        if (body.reportId) reports.update(String(body.reportId), { status: 'resolved', note: body.note ?? undefined, action: `정지 ${days ? `${days}일` : '영구'}` });
+        return json(res, 200, { ok: true, ban });
+      }
+      if (p === '/api/admin/unban') {
+        const u = store.get(String(body.userId ?? ''));
+        if (!u) return json(res, 404, { error: '회원을 찾을 수 없어' });
+        delete u.ban;
+        store.persist();
+        console.log(`[ban] 해제 ${u.id.slice(0, 8)}`);
+        return json(res, 200, { ok: true });
+      }
+    } catch (e) {
+      if (e instanceof ReportError || /찾을 수 없어/.test(e.message)) return json(res, 400, { error: e.message });
+      throw e;
+    }
+    return json(res, 404, { error: 'not found' });
+  }
+
   // ── 게임 밖 관계 (함께한 사람 · 친구 · 나의 인연 · 메시지) ──
   /** 끝난 게임: 함께한 사람과 최종 매칭을 기록한다. 봇은 개발 모드에서만 (시험용) */
   function recordRelations(roomId, room) {
@@ -391,9 +473,42 @@ export function createServer(opts = {}) {
     });
   }
 
-  function authUser(req) {
+  /** 로그인한 회원. 이용 정지 중이면 null (정지 안내는 /api/me 와 WS 에서 따로 알려 준다) */
+  function authUser(req, { allowBanned = false } = {}) {
     const m = /^Bearer (.+)$/.exec(req.headers.authorization ?? '');
-    return m ? store.byToken(m[1]) : null;
+    const u = m ? store.byToken(m[1]) : null;
+    if (u && !allowBanned && banOf(u)) return null;
+    return u;
+  }
+
+  // ── 이용 정지 ──
+  /** 정지 중이면 { reason, until(null=영구), at }, 아니면 null. 기간이 지난 정지는 지운다 */
+  function banOf(u) {
+    const b = u?.ban;
+    if (!b) return null;
+    if (b.until !== null && b.until <= Date.now()) {
+      delete u.ban;
+      store.persist();
+      return null;
+    }
+    return b;
+  }
+  const banBody = (b) => ({ error: '이용이 정지된 계정이야', banned: { reason: b.reason, until: b.until } });
+  function applyBan(userId, { days, reason }) {
+    const u = store.get(userId);
+    if (!u) throw new Error('회원을 찾을 수 없어');
+    u.ban = { reason: String(reason ?? '').slice(0, 200) || '운영 정책 위반', until: days ? Date.now() + days * 24 * 3600 * 1000 : null, at: Date.now() };
+    store.persist();
+    leaveQueue(userId);
+    leaveParty(userId);
+    partyInvites.delete(userId);
+    for (const ws of sockets.get(userId) ?? []) {
+      try { ws.send(JSON.stringify({ t: 'banned', ...banBody(u.ban).banned })); } catch {}
+      ws.close(4005, 'banned');
+    }
+    // 진행 중인 게임에서는 연결 끊김으로 처리된다 (게임 기록은 그대로)
+    console.log(`[ban] ${userId.slice(0, 8)} ${days ? `${days}일` : '영구'} — ${u.ban.reason}`);
+    return u.ban;
   }
 
   function meResponse(u) {
@@ -430,6 +545,7 @@ export function createServer(opts = {}) {
     const existing = store.byIdentity(ident.provider, ident.sub);
     if (existing) {
       if (linkUser && linkUser.id !== existing.id) return { status: 409, body: { error: '이 계정은 이미 다른 프로필에 연결돼 있어' } };
+      if (banOf(existing)) return { status: 403, body: banBody(existing.ban) };
       return { status: 200, body: { token: existing.token, me: meResponse(existing) } };
     }
     if (linkUser) {
@@ -465,9 +581,12 @@ export function createServer(opts = {}) {
         return json(res, 200, { token: u.token, me: meResponse(u) });
       }
       if (p === '/api/me' && req.method === 'GET') {
-        const u = authUser(req);
+        const u = authUser(req, { allowBanned: true });
+        if (u && banOf(u)) return json(res, 403, banBody(u.ban));
         return u ? json(res, 200, meResponse(u)) : json(res, 401, { error: '로그인이 필요하다' });
       }
+      // ── 관리자 ──
+      if (p.startsWith('/api/admin/')) return handleAdmin(req, res, p, url);
       if (p === '/api/me' && req.method === 'PUT') {
         const u = authUser(req);
         if (!u) return json(res, 401, { error: '로그인이 필요하다' });
@@ -798,6 +917,12 @@ export function createServer(opts = {}) {
         user = store.byToken(msg.token);
         clearTimeout(hello);
         if (!user) return ws.close(4003, 'bad token');
+        if (banOf(user)) {
+          ws.send(JSON.stringify({ t: 'banned', ...banBody(user.ban).banned }));
+          const u0 = user;
+          user = null;
+          return ws.close(4005, `banned ${u0.id.slice(0, 4)}`);
+        }
         if (!sockets.has(user.id)) sockets.set(user.id, new Set());
         sockets.get(user.id).add(ws);
         ws.send(JSON.stringify({ t: 'welcome', me: meResponse(user) }));

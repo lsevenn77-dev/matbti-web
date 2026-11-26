@@ -53,3 +53,9 @@ systemctl restart nasolneosol
 
 사용 순서: 오늘 무료 → 월정액 → 회차권. 대기열에 들어갈 때가 아니라 **방이 시작될 때** 1회 사용.
 실결제(나이스페이 키가 있을 때)는 간편 로그인 계정을 연결한 사람만 할 수 있다 (입장권이 기기와 함께 사라지지 않게).
+
+## 관리자 화면
+- 주소: `https://nasol.dasi-on.co.kr/admin.html`
+- 키: 서버 `/etc/nasolneosol.env` 의 `ADMIN_KEY` (24자 이상). 키 보기: `grep ADMIN_KEY /etc/nasolneosol.env`
+- 할 수 있는 것: 현황 숫자, 신고 확인(증거 대화 포함)·처리 완료·기각, 이용 정지(1·7·30일·영구)·해제
+- 신고 원본은 `/var/lib/nasolneosol/reports.jsonl`. 처리 완료 후 1년 지난 기록은 서버가 켜질 때 지운다

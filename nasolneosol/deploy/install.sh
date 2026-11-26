@@ -82,6 +82,8 @@ APPLE_SIGN_IN_AUDIENCES=
 NICEPAY_CLIENT_KEY=
 NICEPAY_SECRET_KEY=
 NICEPAY_MODE=sandbox
+# 관리자 화면(/admin.html) 키. 24자 이상. 비어 있으면 관리자 화면이 꺼진다
+ADMIN_KEY=
 EOF
   chmod 600 /etc/nasolneosol.env
 fi

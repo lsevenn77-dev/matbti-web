@@ -1,6 +1,6 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=24';
-import { AudioDirector } from './audio.js?v=24';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=25';
+import { AudioDirector } from './audio.js?v=25';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -79,8 +79,25 @@ async function boot() {
       return;
     }
     if (r && r.status === 401) safeSet('nsns_token', null);
+    if (r && r.status === 403) {
+      const j = await r.json().catch(() => ({}));
+      if (j.banned) return showBanned(j.banned);
+    }
   }
   showStart();
+}
+
+/** 이용 정지 안내 (시작 화면 위) */
+function banText(b) {
+  const until = b.until ? `${new Date(b.until).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}까지` : '기간 없이 (영구)';
+  return `🚫 이용이 정지된 계정이야.\n사유: ${b.reason}\n${until} 이용할 수 없어. 이의가 있으면 고객센터로 알려 줘.`;
+}
+function showBanned(b) {
+  st.banned = b;
+  showStart();
+  $('#social-msg').textContent = banText(b);
+  $('#social-msg').classList.add('ban-msg');
+  $('#btn-guest').hidden = true;
 }
 
 // ───────────── 시작 (로그인 전) ─────────────
@@ -730,6 +747,10 @@ const PROVIDER = { google: '구글', kakao: '카카오', apple: 'Apple' };
 /** 서버 응답 처리. 화면을 바꿨으면 true */
 async function handleAuth(ok, j) {
   if (!ok) {
+    if (j?.banned) {
+      showBanned(j.banned);
+      return false;
+    }
     const msg = j?.error || '로그인에 실패했어';
     if (st.me) $('#account-state').textContent = msg;
     else $('#social-msg').textContent = msg;
@@ -882,6 +903,7 @@ function connect() {
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
   ws.onclose = (e) => {
     if (st.deleted || e.code === 4004) return; // 탈퇴한 계정: 다시 연결하지 않는다
+    if (e.code === 4005 || st.banned) return showBanned(st.banned ?? { reason: '운영 정책 위반', until: null }); // 이용 정지
     if (e.code === 4003) {
       safeSet('nsns_token', null);
       location.reload();
@@ -938,6 +960,8 @@ function onMessage(m) {
     st.scene?.applyPose(m.id, m);
   } else if (m.t === 'chat') {
     addChat(m.message);
+  } else if (m.t === 'banned') {
+    st.banned = { reason: m.reason, until: m.until };
   } else if (m.t === 'party') {
     onParty(m);
   } else if (m.t === 'partyNote') {
