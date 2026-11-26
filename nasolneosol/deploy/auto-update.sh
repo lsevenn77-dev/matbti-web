@@ -10,7 +10,7 @@ git fetch -q --depth 1 origin "$BRANCH"
 new=$(git rev-parse FETCH_HEAD)
 cur=$(git rev-parse HEAD)
 [ "$new" = "$cur" ] && exit 0
-active=$(curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/info" 2>/dev/null | sed -n 's/.*"activeRooms":\([0-9]*\).*/\1/p')
+active=$( (curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/info" 2>/dev/null || true) | sed -n 's/.*"activeRooms":\([0-9]*\).*/\1/p')
 if [ "${active:-0}" != "0" ]; then
   echo "새 버전 ${new:0:7} 대기 중 (진행 중인 게임 $active 개)"
   exit 0
