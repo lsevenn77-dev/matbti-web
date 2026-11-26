@@ -288,3 +288,9 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
 .age-range legend { font-size: 13px; padding: 0 4px; }
 .age-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 14px; }
 .age-range .age-row input { width: 60px !important; flex: none; display: inline-block; margin: 0 !important; text-align: center; padding: 8px 6px; }
+
+/* 소리 켜기/끄기 */
+.sound-btn { pointer-events: auto; border: 0; background: rgba(255,251,244,.95); border-radius: 999px; width: 34px; height: 34px; font-size: 16px; box-shadow: var(--shadow); cursor: pointer; }
+@media (orientation: landscape) and (max-height: 560px) {
+  .sound-btn { width: 28px; height: 28px; font-size: 13px; }
+}

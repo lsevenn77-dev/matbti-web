@@ -1,5 +1,6 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
 import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js';
+import { AudioDirector } from './audio.js';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -301,9 +302,24 @@ function onMessage(m) {
 }
 
 // ───────────── 게임 ─────────────
+// 배경음악 (게임 화면에서만)
+const audio = new AudioDirector();
+window.__nsnsAudio = audio; // 진단용
+function renderSoundBtn() {
+  $('#btn-sound').textContent = audio.muted ? '🔇' : '🔊';
+  $('#btn-sound').setAttribute('aria-label', audio.muted ? '소리 켜기' : '소리 끄기');
+}
+$('#btn-sound').addEventListener('click', () => {
+  audio.setMuted(!audio.muted);
+  audio.start();
+  renderSoundBtn();
+});
+renderSoundBtn();
+
 function onState(v) {
   const first = !st.view;
   st.view = v;
+  audio.update(v);
   if (first) {
     show('screen-game');
     st.scene ??= new GameScene($('#scene'), { onTapCharacter: openProfile, onTapFloor: tapFloor });
