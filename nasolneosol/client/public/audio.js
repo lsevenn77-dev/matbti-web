@@ -4,6 +4,7 @@
 // - 음소거는 기기에 기억한다. 브라우저 정책상 첫 터치·클릭 뒤에 소리가 난다.
 
 const MOODS = {
+  waiting: { bpm: 92, chords: [[0, 'M'], [7, 'M'], [9, 'm'], [5, 'M']], inst: 'pluck', vol: 0.5, amb: 0 }, // 대기 화면 (음원 파일 우선)
   //        bpm  화음(근음 반음, 장/단)                                 악기          음량
   lobby:   { bpm: 92, chords: [[0, 'M'], [7, 'M'], [9, 'm'], [5, 'M']], inst: 'pluck', vol: 0.5, amb: 0.5 },
   village: { bpm: 84, chords: [[0, 'M'], [5, 'M'], [9, 'm'], [7, 'M']], inst: 'pluck', vol: 0.45, amb: 1 },
@@ -18,8 +19,9 @@ const MOODS = {
 
 /** 단계 → 분위기 */
 export function moodFor(view) {
-  const p = view?.phase;
-  if (!p || p === 'waiting') return 'lobby';
+  if (!view) return 'waiting'; // 게임 밖 = 대기 화면
+  const p = view.phase;
+  if (!p || p === 'waiting') return 'waiting';
   if (p === 'intro') return 'lobby';
   if (p === 'firstVote' || p === 'date2Pick') return 'tension';
   if (p.startsWith('date')) return view.myDate ? 'romance' : 'village';
@@ -42,7 +44,10 @@ export class AudioDirector {
     try { this.muted = localStorage.getItem('nsns-muted') === '1'; } catch {}
     this.duck = 1;
     this.files = {};
-    fetch('/audio/tracks.json').then((r) => (r.ok ? r.json() : {})).then((j) => (this.files = j || {})).catch(() => {});
+    fetch('/audio/tracks.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).then((j) => {
+      this.files = j || {};
+      if (this.ctx && this.mood) this.applyMood(this.mood); // 파일 목록이 늦게 와도 반영
+    }).catch(() => {});
     // 브라우저 정책: 사용자가 한 번 눌러야 소리를 낼 수 있다
     const unlock = () => {
       this.start();
@@ -122,6 +127,10 @@ export class AudioDirector {
       el.crossOrigin = 'anonymous';
       el.dataset.mood = mood;
       el.volume = 0;
+      // 음소거(master)가 음원 파일에도 적용되도록 WebAudio 로 연결 (같은 출처 파일)
+      try {
+        this.ctx.createMediaElementSource(el).connect(this.master);
+      } catch {}
       el.play().catch(() => {});
       this.fileEl = el;
       this.fileVol = file.volume ?? 0.6;

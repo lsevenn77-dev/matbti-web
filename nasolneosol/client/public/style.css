@@ -312,3 +312,5 @@ ol.rank { margin: 6px 0 0; padding-left: 22px; font-size: 13px; }
 .shop button { border: 1px solid var(--line); background: #fffaf2; border-radius: 12px; padding: 8px 4px; cursor: pointer; font-size: 12px; line-height: 1.35; }
 .shop button b { display: block; font-size: 14px; }
 .shop button .best { display: inline-block; font-size: 10px; background: #e98a5d; color: #fff; border-radius: 99px; padding: 0 6px; margin-top: 2px; }
+.card { position: relative; }
+.lobby-sound { position: absolute; top: 14px; right: 14px; }

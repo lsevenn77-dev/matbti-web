@@ -199,6 +199,7 @@ $('#signup-form').addEventListener('submit', async (e) => {
 // ───────────── 대기 ─────────────
 function showLobby(status) {
   show('screen-lobby');
+  audio.update(null); // 대기 화면 음악
   // 가입 중에 미뤄 둔 새 버전은 대기 화면에서 적용
   if (st.pendingUpdate?.waiting && !st.view) {
     st.pendingUpdate.waiting.postMessage('skipWaiting');
@@ -492,14 +493,18 @@ function onMessage(m) {
 const audio = new AudioDirector();
 window.__nsnsAudio = audio; // 진단용
 function renderSoundBtn() {
-  $('#btn-sound').textContent = audio.muted ? '🔇' : '🔊';
-  $('#btn-sound').setAttribute('aria-label', audio.muted ? '소리 켜기' : '소리 끄기');
+  for (const b of [$('#btn-sound'), $('#btn-sound-lobby')]) {
+    b.textContent = audio.muted ? '🔇' : '🔊';
+    b.setAttribute('aria-label', audio.muted ? '소리 켜기' : '소리 끄기');
+  }
 }
-$('#btn-sound').addEventListener('click', () => {
-  audio.setMuted(!audio.muted);
-  audio.start();
-  renderSoundBtn();
-});
+for (const b of [$('#btn-sound'), $('#btn-sound-lobby')]) {
+  b.addEventListener('click', () => {
+    audio.setMuted(!audio.muted);
+    audio.start();
+    renderSoundBtn();
+  });
+}
 renderSoundBtn();
 
 function onState(v) {
