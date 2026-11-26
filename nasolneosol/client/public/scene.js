@@ -66,7 +66,6 @@ export class GameScene {
     this.onTapFloor = onTapFloor;
     // 폰(터치 기기)은 발열·배터리를 위해 해상도·그림자·프레임을 낮춘다
     this.mobile = matchMedia('(pointer: coarse)').matches;
-    // 화질은 그대로 (해상도·안티에일리어싱·그림자 유지). 폰은 프레임만 30으로 제한해 발열을 줄인다
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -91,13 +90,7 @@ export class GameScene {
     this.loadProps();
     this.resize();
     addEventListener('resize', () => this.resize());
-    // 폰은 초당 30프레임으로 제한 (발열 감소)
-    let lastFrame = 0;
-    this.renderer.setAnimationLoop((now) => {
-      if (this.mobile && now - lastFrame < 31) return;
-      lastFrame = now;
-      this.frame();
-    });
+    this.renderer.setAnimationLoop(() => this.frame());
   }
 
   // ───────── 월드 ─────────
