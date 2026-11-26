@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>나솔너솔</title>
   <meta name="description" content="나도 솔로, 너도 솔로 — 12명이 함께하는 소셜 데이팅 게임 (시제품)" />
-  <meta name="theme-color" content="#f6efe4" />
+  <meta name="theme-color" content="#f7d9e6" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
@@ -16,20 +16,56 @@
   <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three-addons/" } }</script>
 </head>
 <body>
-  <!-- 가입 -->
-  <section id="screen-signup" class="screen" hidden>
-    <div class="card narrow">
-      <h1 class="logo">나솔너솔<small>나도 솔로, 너도 솔로</small></h1>
-      <p class="muted">입장하면 이번 회차 가명과 캐릭터가 정해져. 나이·직업·사는 곳은 자기소개 전까지 다른 사람에게 보이지 않아.</p>
-      <div id="social-box" class="social" hidden>
-        <p class="small strong">간편 로그인으로 시작</p>
-        <div class="social-btns">
-          <div id="g-btn"></div>
-          <button type="button" class="sbtn kakao" id="btn-kakao" hidden>카카오로 시작</button>
-          <button type="button" class="sbtn apple" id="btn-apple" hidden> Apple로 계속</button>
-        </div>
-        <p class="tiny muted" id="social-msg">이미 가입했다면 같은 계정으로 다른 기기에서도 이어서 할 수 있어.</p>
+  <!-- 시작·가입·로비 공통 배경과 상단 바 (게임 화면에서는 숨김) -->
+  <div class="out-bg" aria-hidden="true"></div>
+  <header class="topbar" id="topbar">
+    <a class="tb-logo" href="/" aria-label="나솔너솔 처음으로"><img src="/img/logo.webp" alt="나솔너솔" /></a>
+    <span class="tb-tag">나도 솔로, 너도 솔로</span>
+    <nav class="tb-nav" id="tb-nav">
+      <button type="button" class="on" data-tab="lobby"><span aria-hidden="true">🏠</span> 로비</button>
+      <button type="button" data-tab="guide"><span aria-hidden="true">📖</span> 게임 안내</button>
+    </nav>
+    <div class="tb-right">
+      <button type="button" class="icon-btn" id="btn-sound-lobby" aria-label="소리 끄기">🔊</button>
+      <input type="range" class="vol" id="vol" min="0" max="100" step="5" aria-label="음량" />
+      <button type="button" class="icon-btn" id="btn-settings" aria-label="설정">⚙️</button>
+    </div>
+  </header>
+
+  <!-- 시작 (로그인 전) -->
+  <section id="screen-start" class="screen out" hidden>
+    <div class="start-hero">
+      <img class="start-logo" src="/img/logo.webp" alt="나솔너솔" />
+      <p class="start-tag">나도 솔로, 너도 솔로</p>
+    </div>
+    <div class="start-card">
+      <img class="start-logo in-card" src="/img/logo.webp" alt="" aria-hidden="true" />
+      <p class="start-tag in-card">나도 솔로, 너도 솔로</p>
+      <h2 class="start-head">지금, 새로운 인연을 만나보세요!</h2>
+      <p class="start-desc">12명이 한 집에 모여 대화하고 데이트하며 <br />설레는 인연을 찾아가는 소셜 게임이에요.</p>
+      <div class="start-divider" aria-hidden="true"><span>♡</span></div>
+      <div id="social-box" class="social-col">
+        <button type="button" class="sbtn kakao" id="btn-kakao" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#191600" d="M12 3C6.5 3 2 6.6 2 11c0 2.8 1.9 5.3 4.7 6.7l-1 3.7c-.1.3.3.6.6.4l4.4-2.9c.4 0 .9.1 1.3.1 5.5 0 10-3.6 10-8S17.5 3 12 3z"/></svg>카카오로 시작하기</button>
+        <div id="g-btn" class="g-wrap"></div>
+        <button type="button" class="sbtn apple" id="btn-apple" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.7-1-2.7-4.1zM13.9 5c.7-.9 1.2-2 1-3.2-1 .1-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.1 1.2.1 2.3-.6 3.1-1.5z"/></svg>Apple로 시작하기</button>
       </div>
+      <p class="tiny start-msg" id="social-msg"></p>
+      <button type="button" class="link" id="btn-guest" hidden>로그인 없이 시작하기</button>
+      <p class="tiny muted start-age">만 19세 이상 · 시작하면 이용약관과 개인정보처리방침에 동의한 것으로 봐요</p>
+      <nav class="start-links"><a href="/terms.html">📄 이용약관</a><span>|</span><a href="/privacy.html">🛡 개인정보처리방침</a></nav>
+    </div>
+    <footer class="site-foot start-foot"></footer>
+  </section>
+
+  <!-- 프로필 만들기·수정 -->
+  <section id="screen-signup" class="screen out" hidden>
+    <div class="card narrow pf-card">
+      <div class="pf-head">
+        <button type="button" class="link" id="btn-signup-back">‹ 돌아가기</button>
+        <h2 id="pf-title">프로필 만들기</h2>
+      </div>
+      <p class="pf-ok" id="pf-ok" hidden></p>
+      <p class="muted small">입장하면 이번 회차 가명과 캐릭터가 정해져. 나이·직업·사는 곳은 자기소개 전까지 다른 사람에게 보이지 않아.</p>
       <form id="signup-form" autocomplete="off">
         <label class="photo-pick">
           <input type="file" id="photo-input" accept="image/*" />
@@ -55,54 +91,117 @@
         <button class="btn primary" type="submit">시작하기</button>
       </form>
       <p class="tiny muted">시작하면 <a href="/terms.html">이용약관</a>과 <a href="/privacy.html">개인정보처리방침</a>에 동의한 것으로 봐. 만 19세 이상만 이용할 수 있어. 실명·연락처·상세 주소는 받지 않아.</p>
-      <footer class="site-foot"></footer>
     </div>
   </section>
 
-  <!-- 대기 -->
-  <section id="screen-lobby" class="screen" hidden>
-    <div class="card narrow">
-      <button type="button" class="sound-btn lobby-sound" id="btn-sound-lobby" aria-label="소리 끄기">🔊</button>
-      <h1 class="logo">나솔너솔<small>나도 솔로, 너도 솔로</small></h1>
-      <div class="me-row">
-        <img id="lobby-photo" class="avatar" alt="내 프로필 사진" />
-        <div>
-          <div id="lobby-me" class="strong"></div>
-          <button class="link" id="btn-edit">프로필 수정</button>
+  <!-- 로비 (대기) -->
+  <section id="screen-lobby" class="screen out" hidden>
+    <div class="lobby">
+      <aside class="lb-left">
+        <div class="pcard-lg me-card">
+          <img id="lobby-photo" class="avatar" alt="내 프로필 사진" />
+          <div class="me-text">
+            <div class="me-name" id="lobby-name"></div>
+            <div class="me-sub" id="lobby-me"></div>
+          </div>
+          <button type="button" class="me-edit" id="btn-edit">프로필 수정 ›</button>
         </div>
-      </div>
-      <div class="queue-box">
-        <div class="queue-counts">
-          <div><span id="q-male">0</span>/<span id="q-male-need">6</span><small>남자</small></div>
-          <div><span id="q-female">0</span>/<span id="q-female-need">6</span><small>여자</small></div>
+        <div class="pcard-lg wallet" id="wallet-box">
+          <div class="wallet-head"><strong>🎟 입장권</strong><span id="wallet-sum"></span></div>
+          <div class="wallet-detail tiny muted" id="wallet-detail"></div>
+          <div class="shop" id="shop"></div>
+          <p class="tiny muted" id="shop-note"></p>
         </div>
-        <p id="queue-msg" class="muted">12명이 모이면 바로 시작해. (선착순)</p>
-        <button class="btn primary" id="btn-queue">입장 대기</button>
-        <button class="btn" id="btn-bots" hidden>개발: 봇으로 나머지 채우기</button>
-      </div>
-      <div class="wallet" id="wallet-box">
-        <div class="wallet-head"><strong>🎟 입장권</strong><span id="wallet-sum"></span></div>
-        <div class="wallet-detail tiny muted" id="wallet-detail"></div>
-        <div class="shop" id="shop"></div>
-        <p class="tiny muted" id="shop-note"></p>
-      </div>
-      <div class="account" id="account-box">
-        <div class="small"><strong>계정 연결</strong> <span class="muted tiny" id="account-state"></span></div>
-        <div class="social-btns small-btns">
-          <div id="g-btn-link"></div>
-          <button type="button" class="sbtn kakao" id="btn-kakao-link" hidden>카카오 연결</button>
-          <button type="button" class="sbtn apple" id="btn-apple-link" hidden> Apple 연결</button>
+      </aside>
+
+      <main class="lb-center">
+        <div class="hero">
+          <div class="hero-plate">
+            <img class="hero-logo" src="/img/logo.webp" alt="나솔너솔" />
+            <p class="hero-tag">나도 솔로, 너도 솔로</p>
+            <div class="wait-box">
+              <div class="wait-title">게임 대기 현황</div>
+              <div class="wait-counts">
+                <span class="m"><i aria-hidden="true">👤</i> 남자 <b><span id="q-male">0</span>/<span id="q-male-need">6</span></b></span>
+                <span class="f"><i aria-hidden="true">👤</i> 여자 <b><span id="q-female">0</span>/<span id="q-female-need">6</span></b></span>
+              </div>
+              <p id="queue-msg" class="wait-msg">12명이 모이면 바로 시작해. (선착순)</p>
+            </div>
+          </div>
+          <div class="hero-actions">
+            <button type="button" class="enter-btn" id="btn-queue"><span aria-hidden="true">🎮</span> 게임 입장</button>
+            <button type="button" class="dev-btn" id="btn-bots" hidden>개발: 봇으로 나머지 채우기</button>
+          </div>
         </div>
-      </div>
-      <p class="muted small" id="lobby-info"></p>
-      <div id="install-box" class="install" hidden>
-        <strong>홈 화면에 나솔너솔 추가</strong>
-        <p id="install-text" class="small"></p>
-        <button class="btn" id="btn-install" hidden>홈 화면에 설치</button>
-      </div>
-      <footer class="site-foot"></footer>
+        <div class="pcard-lg steps">
+          <div class="steps-title">✨ 게임 진행 방식</div>
+          <ol class="steps-list">
+            <li><i aria-hidden="true">👥</i><b>입장</b><span>남녀 6명씩 12명이 모이면 바로 시작해요.</span></li>
+            <li><i aria-hidden="true">💗</i><b>인연 찾기</b><span>첫인상·데이트·자기소개로 서로를 알아가요.</span></li>
+            <li><i aria-hidden="true">💌</i><b>최종 선택</b><span>마음에 드는 상대를 골라요.</span></li>
+            <li><i aria-hidden="true">📱</i><b>연락처 교환</b><span>서로 선택하면 원할 때만 연락처를 나눠요.</span></li>
+          </ol>
+        </div>
+      </main>
+
+      <aside class="lb-right">
+        <div class="pcard-lg account" id="account-box">
+          <div class="small"><strong>계정 연결</strong> <span class="muted tiny" id="account-state"></span></div>
+          <div class="social-btns small-btns">
+            <div id="g-btn-link"></div>
+            <button type="button" class="sbtn kakao" id="btn-kakao-link" hidden>카카오 연결</button>
+            <button type="button" class="sbtn apple" id="btn-apple-link" hidden> Apple 연결</button>
+          </div>
+        </div>
+        <div class="pcard-lg note-card">
+          <div class="note-title">💗 최종 매칭 후에는?</div>
+          <ul>
+            <li>게임 중에는 1:1 연락처 교환을 할 수 없어요.</li>
+            <li>서로를 최종 선택한 상대와만 연락처를 나눌 수 있어요.</li>
+            <li>연락처 공개는 본인이 선택해요.</li>
+          </ul>
+          <p class="muted tiny" id="lobby-info"></p>
+        </div>
+        <div id="install-box" class="pcard-lg install" hidden>
+          <strong>홈 화면에 나솔너솔 추가</strong>
+          <p id="install-text" class="small"></p>
+          <button class="btn" id="btn-install" hidden>홈 화면에 설치</button>
+        </div>
+      </aside>
     </div>
+    <footer class="site-foot lobby-foot"></footer>
   </section>
+
+  <!-- 게임 안내 / 설정 (로비 위에 뜨는 창) -->
+  <div class="modal" id="modal-guide" hidden>
+    <div class="modal-card">
+      <button type="button" class="modal-x" data-close aria-label="닫기">✕</button>
+      <h2>📖 게임 안내</h2>
+      <p class="muted small">남녀 6명씩 12명이 한 집에 모여 약 1시간 동안 진행해. 대화는 텍스트 채팅이고, 자기소개와 데이트 때는 음성도 쓸 수 있어.</p>
+      <ol class="guide-list">
+        <li><b>입장 안내</b> 가명과 캐릭터가 정해져.</li>
+        <li><b>첫인상 선택</b> (1분) 추첨된 한 성별만 마음에 드는 사람을 골라.</li>
+        <li><b>1차 데이트</b> (5분) 첫인상 선택을 받은 사람과 데이트해.</li>
+        <li><b>숙소 자유 구경</b> (5분) 집 안을 돌아다니며 이야기해.</li>
+        <li><b>자기소개</b> 한 명씩 소개 1분 + 질문 1분. 이때부터 나이·직업·사는 곳이 공개돼.</li>
+        <li><b>미니게임</b> 이기면 데이트 상대를 먼저 고를 수 있어.</li>
+        <li><b>2차 데이트</b> (5분) 원하는 상대를 지목해서 데이트해.</li>
+        <li><b>3차 데이트</b> (8분) 사다리타기로 상대가 정해져.</li>
+        <li><b>최종 선택</b> 마음에 드는 한 사람을 골라.</li>
+        <li><b>결과 · 연락처 교환</b> 서로 선택했다면 원할 때만 연락처를 나눠.</li>
+      </ol>
+      <p class="muted tiny">입장권은 방이 실제로 시작될 때 1회 쓰여. 대기만 하다 나가면 쓰이지 않아.</p>
+    </div>
+  </div>
+  <div class="modal" id="modal-settings" hidden>
+    <div class="modal-card narrow-modal">
+      <button type="button" class="modal-x" data-close aria-label="닫기">✕</button>
+      <h2>⚙️ 설정</h2>
+      <div class="set-row"><span>배경음악</span><button type="button" class="btn small" id="btn-sound-settings">끄기</button></div>
+      <button type="button" class="btn" id="btn-edit-2" hidden>프로필 수정</button>
+      <nav class="set-links"><a href="/terms.html">이용약관</a><a href="/privacy.html">개인정보처리방침</a><a href="/refund.html">환불정책</a></nav>
+    </div>
+  </div>
 
   <!-- 게임 -->
   <section id="screen-game" class="screen" hidden>

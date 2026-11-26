@@ -52,6 +52,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
+  document.body.dataset.screen = id; // 상단 바·배경 표시 여부를 CSS 가 정한다
+  closeModals();
 }
 
 // ───────────── 시작 ─────────────
@@ -78,8 +80,18 @@ async function boot() {
     }
     if (r && r.status === 401) safeSet('nsns_token', null);
   }
-  showSignup();
+  showStart();
 }
+
+// ───────────── 시작 (로그인 전) ─────────────
+function showStart() {
+  show('screen-start');
+  const a = st.info?.auth;
+  const anyLogin = !!(a && (a.google || a.kakao || a.apple));
+  // 간편 로그인이 없거나 개발 모드면 로그인 없이 바로 프로필을 만들 수 있다
+  $('#btn-guest').hidden = anyLogin && !st.info?.devTools;
+}
+$('#btn-guest').addEventListener('click', () => showSignup());
 
 // ───────────── 가입 ─────────────
 let photoData = null;
@@ -87,6 +99,9 @@ function showSignup(editing = false) {
   show('screen-signup');
   const f = $('#signup-form');
   f.dataset.editing = editing ? '1' : '';
+  $('#pf-title').textContent = editing ? '프로필 수정' : '프로필 만들기';
+  f.querySelector('button[type=submit]').textContent = editing ? '저장' : '시작하기';
+  $('#pf-ok').hidden = !st.signupTicket || editing;
   if (editing && st.me) {
     f.age.value = st.me.profile.age;
     f.job.value = st.me.profile.job;
@@ -97,7 +112,6 @@ function showSignup(editing = false) {
     $('#photo-preview').src = st.me.profile.photoUrl;
     $('#photo-preview').hidden = false;
     $('#photo-hint').hidden = true;
-    f.querySelector('button').textContent = '저장';
   }
   if (st.info) f.age.min = st.info.minAge;
   if (!editing) restoreDraft();
@@ -132,6 +146,10 @@ function restoreDraft() {
     $('#photo-hint').hidden = true;
   }
 }
+$('#btn-signup-back').addEventListener('click', () => {
+  if ($('#signup-form').dataset.editing === '1' && st.me) showLobby();
+  else showStart();
+});
 $('#signup-form').addEventListener('input', saveDraft);
 $('#signup-form').addEventListener('change', saveDraft);
 
@@ -208,14 +226,17 @@ function showLobby(status) {
   $('#lobby-photo').src = st.me.profile.photoUrl;
   const p = st.me.profile;
   const range = p.ageUp == null || (p.ageUp >= 40 && p.ageDown >= 40) ? '나이 상관없음' : `${Math.max(19, p.age - (p.ageDown ?? 40))}~${p.age + (p.ageUp ?? 40)}세와 매칭`;
-  $('#lobby-me').textContent = `${G[p.gender]} · ${p.age}세 · ${p.job} · ${p.region} · ${range}`;
+  $('#lobby-name').textContent = `${G[p.gender]} · ${p.age}세`;
+  $('#lobby-me').textContent = `${p.job} · ${p.region} · ${range}`;
+  $('#btn-edit-2').hidden = false;
   if (status) {
     $('#q-male').textContent = status.male;
     $('#q-female').textContent = status.female;
     $('#q-male-need').textContent = status.need.male;
     $('#q-female-need').textContent = status.need.female;
-    $('#btn-queue').textContent = status.inQueue ? '대기 취소' : '입장 대기';
+    $('#btn-queue').innerHTML = status.inQueue ? '<span aria-hidden="true">⏳</span> 대기 취소' : '<span aria-hidden="true">🎮</span> 게임 입장';
     $('#btn-queue').dataset.in = status.inQueue ? '1' : '';
+    $('#btn-queue').classList.toggle('waiting', !!status.inQueue);
     const mine = p.gender;
     const need = status.need[mine] - status[mine];
     if (status.inQueue) {
@@ -253,6 +274,34 @@ function showLobby(status) {
   }
 }
 $('#btn-edit').addEventListener('click', () => showSignup(true));
+$('#btn-edit-2').addEventListener('click', () => showSignup(true));
+
+// 상단 바: 게임 안내·설정 창
+function closeModals() {
+  for (const m of document.querySelectorAll('.modal')) m.hidden = true;
+  for (const b of document.querySelectorAll('#tb-nav button')) b.classList.toggle('on', b.dataset.tab === 'lobby');
+}
+function openModal(id) {
+  closeModals();
+  $(id).hidden = false;
+}
+for (const m of document.querySelectorAll('.modal')) {
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-close]')) closeModals();
+  });
+}
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModals();
+});
+for (const b of document.querySelectorAll('#tb-nav button')) {
+  b.addEventListener('click', () => {
+    if (b.dataset.tab === 'guide') {
+      openModal('#modal-guide');
+      for (const x of document.querySelectorAll('#tb-nav button')) x.classList.toggle('on', x === b);
+    } else closeModals();
+  });
+}
+$('#btn-settings').addEventListener('click', () => openModal('#modal-settings'));
 $('#btn-queue').addEventListener('click', () => sendWs({ t: $('#btn-queue').dataset.in ? 'queue.leave' : 'queue.join' }));
 $('#btn-bots').addEventListener('click', async () => {
   if (!$('#btn-queue').dataset.in) sendWs({ t: 'queue.join' });
@@ -300,8 +349,8 @@ async function handleAuth(ok, j) {
   if (j.signupTicket) {
     st.signupTicket = j.signupTicket;
     showSignup();
-    $('#social-box').classList.add('ok');
-    $('#social-msg').textContent = `✅ ${PROVIDER[j.provider] ?? ''} 계정 확인됨. 아래 프로필만 입력하면 가입 끝!`;
+    $('#pf-ok').textContent = `✅ ${PROVIDER[j.provider] ?? ''} 계정 확인됨. 아래 프로필만 입력하면 가입 끝!`;
+    $('#pf-ok').hidden = false;
     return true;
   }
   return false;
@@ -330,6 +379,7 @@ async function initSocial() {
   const a = st.info?.auth;
   if (!a || !(a.google || a.kakao || a.apple)) {
     $('#account-box').hidden = true;
+    $('#social-box').hidden = true;
     return;
   }
   $('#social-box').hidden = false;
@@ -345,7 +395,9 @@ async function initSocial() {
     try {
       await loadScript('https://accounts.google.com/gsi/client');
       window.google.accounts.id.initialize({ client_id: a.google, callback: (r) => postAuth('google', r.credential) });
-      window.google.accounts.id.renderButton($('#g-btn'), { theme: 'outline', size: 'large', text: 'continue_with', width: 280, locale: 'ko' });
+      // 구글 버튼은 구글이 그린 것만 쓸 수 있다. 카카오·애플 버튼과 폭·모양을 맞춘다 (최대 400px)
+      const gw = Math.round(Math.min(400, Math.max(240, Math.min(innerWidth - 72, 420))));
+      window.google.accounts.id.renderButton($('#g-btn'), { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', logo_alignment: 'center', width: gw, locale: 'ko' });
       window.google.accounts.id.renderButton($('#g-btn-link'), { theme: 'outline', size: 'medium', text: 'signin', locale: 'ko' });
     } catch {}
   }
@@ -493,18 +545,30 @@ function onMessage(m) {
 const audio = new AudioDirector();
 window.__nsnsAudio = audio; // 진단용
 function renderSoundBtn() {
+  const off = audio.muted || audio.volume === 0;
   for (const b of [$('#btn-sound'), $('#btn-sound-lobby')]) {
-    b.textContent = audio.muted ? '🔇' : '🔊';
-    b.setAttribute('aria-label', audio.muted ? '소리 켜기' : '소리 끄기');
+    b.textContent = off ? '🔇' : '🔊';
+    b.setAttribute('aria-label', off ? '소리 켜기' : '소리 끄기');
   }
+  $('#btn-sound-settings').textContent = off ? '켜기' : '끄기';
+  const vol = $('#vol');
+  vol.value = off ? 0 : Math.round(audio.volume * 100);
+  vol.style.setProperty('--p', `${vol.value}%`);
 }
-for (const b of [$('#btn-sound'), $('#btn-sound-lobby')]) {
+for (const b of [$('#btn-sound'), $('#btn-sound-lobby'), $('#btn-sound-settings')]) {
   b.addEventListener('click', () => {
-    audio.setMuted(!audio.muted);
+    const off = audio.muted || audio.volume === 0;
+    if (off && audio.volume === 0) audio.setVolume(0.6);
+    audio.setMuted(!off);
     audio.start();
     renderSoundBtn();
   });
 }
+$('#vol').addEventListener('input', (e) => {
+  audio.setVolume(Number(e.target.value) / 100);
+  audio.start();
+  renderSoundBtn();
+});
 renderSoundBtn();
 
 function onState(v) {

@@ -42,6 +42,8 @@ export class AudioDirector {
     this.mood = null;
     this.muted = false;
     try { this.muted = localStorage.getItem('nsns-muted') === '1'; } catch {}
+    this.volume = 0.8; // 0~1, 대기 화면 슬라이더
+    try { const v = parseFloat(localStorage.getItem('nsns-volume')); if (v >= 0 && v <= 1) this.volume = v; } catch {}
     this.duck = 1;
     this.files = {};
     fetch('/audio/tracks.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).then((j) => {
@@ -71,7 +73,7 @@ export class AudioDirector {
       if (!AC) return;
       this.ctx = new AC();
       this.master = this.ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.8;
+      this.master.gain.value = this.muted ? 0 : this.volume;
       this.master.connect(this.ctx.destination);
       this.musicBus = this.ctx.createGain();
       this.musicBus.connect(this.master);
@@ -95,8 +97,16 @@ export class AudioDirector {
     this.muted = m;
     try { localStorage.setItem('nsns-muted', m ? '1' : '0'); } catch {}
     if (!this.ctx) return;
-    this.master.gain.setTargetAtTime(m ? 0 : 0.8, this.ctx.currentTime, 0.1);
+    this.master.gain.setTargetAtTime(m ? 0 : this.volume, this.ctx.currentTime, 0.1);
     if (!m) this.ctx.resume();
+  }
+
+  /** 음량 0~1. 0 으로 내리면 음소거와 같다 */
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(1, v));
+    try { localStorage.setItem('nsns-volume', String(this.volume)); } catch {}
+    if (this.volume > 0 && this.muted) this.setMuted(false);
+    if (this.ctx && !this.muted) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.05);
   }
 
   /** 상태 반영: 분위기와 말하는 사람 여부 */
