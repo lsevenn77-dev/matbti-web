@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="나솔너솔" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <link rel="stylesheet" href="/style.css?v=21" />
+  <link rel="stylesheet" href="/style.css?v=22" />
   <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three-addons/" } }</script>
 </head>
 <body>
@@ -23,7 +23,10 @@
     <span class="tb-tag">나도 솔로, 너도 솔로</span>
     <nav class="tb-nav" id="tb-nav">
       <button type="button" class="on" data-tab="lobby"><span aria-hidden="true">🏠</span> 로비</button>
-      <button type="button" data-tab="guide"><span aria-hidden="true">📖</span> 게임 안내</button>
+      <button type="button" data-tab="guide"><span aria-hidden="true">📖</span> <span class="lg">게임 </span>안내</button>
+      <button type="button" data-tab="friends"><span aria-hidden="true">👥</span> 친구<i class="badge" id="badge-friends" hidden></i></button>
+      <button type="button" data-tab="matches"><span aria-hidden="true">💗</span> <span class="lg">나의 </span>인연</button>
+      <button type="button" data-tab="messages"><span aria-hidden="true">💬</span> 메시지<i class="badge" id="badge-msgs" hidden></i></button>
     </nav>
     <div class="tb-right">
       <button type="button" class="icon-btn" id="btn-sound-lobby" aria-label="소리 끄기">🔊</button>
@@ -145,6 +148,10 @@
       </main>
 
       <aside class="lb-right">
+        <div class="pcard-lg friends-card" id="friends-card">
+          <div class="fc-head"><strong>친구 목록</strong> <span class="muted small" id="fc-count"></span><button type="button" class="chip-pk" id="btn-friend-add">＋ 친구 추가</button></div>
+          <div class="people" id="fc-list"></div>
+        </div>
         <div class="pcard-lg account" id="account-box">
           <div class="small"><strong>계정 연결</strong> <span class="muted tiny" id="account-state"></span></div>
           <div class="social-btns small-btns">
@@ -191,6 +198,33 @@
         <li><b>결과 · 연락처 교환</b> 서로 선택했다면 원할 때만 연락처를 나눠.</li>
       </ol>
       <p class="muted tiny">입장권은 방이 실제로 시작될 때 1회 쓰여. 대기만 하다 나가면 쓰이지 않아.</p>
+    </div>
+  </div>
+  <div class="modal" id="modal-social" hidden>
+    <div class="modal-card social-card">
+      <button type="button" class="modal-x" data-close aria-label="닫기">✕</button>
+      <h2 id="soc-title">친구</h2>
+      <div class="seg-tabs" id="soc-tabs"></div>
+      <div class="soc-body" id="soc-body"></div>
+      <!-- 1:1 대화 -->
+      <div class="dm" id="dm" hidden>
+        <div class="dm-head">
+          <button type="button" class="link" id="dm-back">‹ 목록</button>
+          <img class="dm-photo" id="dm-photo" alt="" />
+          <div class="dm-who"><b id="dm-name"></b><span class="muted tiny" id="dm-state"></span></div>
+          <button type="button" class="dm-more" id="dm-more" aria-label="더보기">⋯</button>
+        </div>
+        <div class="dm-menu" id="dm-menu" hidden>
+          <button type="button" id="dm-unfriend">친구 끊기</button>
+          <button type="button" id="dm-block" class="danger">차단하기</button>
+        </div>
+        <div class="dm-log" id="dm-log"></div>
+        <form class="dm-form" id="dm-form" autocomplete="off">
+          <input id="dm-input" maxlength="500" placeholder="메시지 입력" />
+          <button class="dm-send" type="submit" aria-label="보내기">➤</button>
+        </form>
+        <p class="tiny muted dm-note" id="dm-note"></p>
+      </div>
     </div>
   </div>
   <div class="modal" id="modal-settings" hidden>
@@ -246,7 +280,7 @@
 
   <div id="update-bar" class="update-bar" hidden>새 버전이 있어. 게임이 끝난 뒤 새로고침하면 적용돼.</div>
 
-  <script type="module" src="/app.js?v=21"></script>
+  <script type="module" src="/app.js?v=22"></script>
   <script type="module" src="/legal/business.js?v=2"></script>
 </body>
 </html>

@@ -23,6 +23,7 @@ import { formGroup, needFor } from './matcher.js';
 import { PRODUCTS, entryStatus, canEnter, consumeEntry, grantProduct } from './wallet.js';
 import { socialConfig, verifyGoogle, verifyApple, verifyKakaoCode, kakaoAuthorizeUrl, SocialAuthError } from './social.js';
 import { payConfig, newOrderId, niceApprove } from './payments.js';
+import { Relations, RelationError } from './relations.js';
 import { randomBytes } from 'node:crypto';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,6 +41,7 @@ export function createServer(opts = {}) {
   const config = makeConfig(PRESETS[env.PRESET] ?? {}, env.VOTER ? { firstVote: { voterGender: env.VOTER } } : {}, opts.config ?? {});
   const store = new FileStore(opts.dataDir === null ? null : path.resolve(env.DATA_DIR || path.join(ROOT, 'data')));
   const voice = new MockVoiceAdapter({ log: env.VOICE_LOG === '1' });
+  const relations = new Relations(store.dir);
 
   const social = socialConfig(env);
   const pay = payConfig(env);
@@ -161,6 +163,44 @@ export function createServer(opts = {}) {
     send(p.userId, { t: 'state', view: room.viewFor(p.id) });
   }
 
+  // ── 게임 밖 관계 (함께한 사람 · 친구 · 나의 인연 · 메시지) ──
+  /** 끝난 게임: 함께한 사람과 최종 매칭을 기록한다. 봇은 개발 모드에서만 (시험용) */
+  function recordRelations(roomId, room) {
+    const people = [...room.participants.values()].filter((p) => !p.isBot || devTools).map((p) => ({ userId: p.userId, alias: p.alias }));
+    const uid = (pid) => room.participants.get(pid)?.userId;
+    const couples = room.matches.map(([a, b]) => [uid(a), uid(b)]).filter(([a, b]) => a && b && people.some((p) => p.userId === a) && people.some((p) => p.userId === b));
+    relations.recordGame({ roomId, people, couples });
+    for (const p of people) send(p.userId, { t: 'social' });
+  }
+
+  /** 목록에 보여 줄 상대 정보. 공개 범위는 게임 자기소개 이후와 같다 (가명·성별·나이·사진) */
+  function personCard(me, otherId) {
+    const u = store.get(otherId);
+    if (!u) return null;
+    return {
+      id: u.id,
+      alias: relations.aliasFor(me, otherId) || (u.isBot ? '봇' : ''),
+      gender: u.profile.gender,
+      age: u.profile.age,
+      photoUrl: u.profile.photoUrl,
+      online: (sockets.get(u.id)?.size ?? 0) > 0,
+      inGame: userRoom.has(u.id),
+      isBot: !!u.isBot,
+    };
+  }
+
+  function socialSummary(me) {
+    const card = (id) => personCard(me, id);
+    const keep = (x) => x.filter((c) => c && !relations.isBlocked(me, c.id));
+    const friends = keep([...(relations.friends.get(me) ?? [])].map(card)).sort((a, b) => Number(b.online) - Number(a.online));
+    const outgoing = new Set(relations.outgoing(me).map((r) => r.userId));
+    const incoming = keep(relations.incoming(me).map((r) => card(r.userId) && { ...card(r.userId), at: r.at }));
+    const met = keep([...(relations.met.get(me) ?? [])].reverse().map(([id, m]) => card(id) && { ...card(id), at: m.at, friend: relations.areFriends(me, id), requested: outgoing.has(id) }));
+    const matches = (relations.matches.get(me) ?? []).filter((m) => !relations.isBlocked(me, m.partnerId)).map((m) => card(m.partnerId) && { ...card(m.partnerId), at: m.at, roomId: m.roomId }).filter(Boolean);
+    const threads = relations.threadsOf(me).map((t) => card(t.userId) && { ...card(t.userId), last: { text: t.last.text, at: t.last.at, mine: t.last.from === me }, unread: t.unread }).filter(Boolean);
+    return { friends, incoming, met, matches, threads, unread: threads.reduce((n, t) => n + t.unread, 0) };
+  }
+
   // ── 게임 루프 ───────────────────────────────────────
   const loop = setInterval(() => {
     for (const [id, { room, bots }] of rooms) {
@@ -173,6 +213,7 @@ export function createServer(opts = {}) {
       if (room.phase === 'ended' && !room.archived) {
         room.archived = true;
         store.saveGameRecord(id, { id, config: room.cfg, events: room.events, matches: room.matches });
+        recordRelations(id, room);
         // 기록 저장 후 일정 시간 뒤 방 정리 (결과 화면은 클라이언트가 유지)
         setTimeout(() => {
           for (const p of room.participants.values()) userRoom.delete(p.userId);
@@ -312,6 +353,61 @@ export function createServer(opts = {}) {
         tryFormRoom();
         broadcastQueue();
         return json(res, 200, meResponse(u));
+      }
+      // ── 친구 · 나의 인연 · 메시지 ──
+      if (p.startsWith('/api/social') || p.startsWith('/api/friends') || p.startsWith('/api/messages') || p === '/api/block') {
+        const u = authUser(req);
+        if (!u) return json(res, 401, { error: '로그인이 필요하다' });
+        try {
+          if (p === '/api/social' && req.method === 'GET') return json(res, 200, socialSummary(u.id));
+          if (req.method === 'GET' && p === '/api/messages') {
+            const other = String(url.searchParams.get('with') ?? '');
+            const peer = personCard(u.id, other);
+            if (!peer) return json(res, 404, { error: '상대를 찾을 수 없어' });
+            const list = relations.history(u.id, other).map((m) => ({ id: m.id, mine: m.from === u.id, text: m.text, at: m.at }));
+            return json(res, 200, { peer, canMessage: relations.canMessage(u.id, other), friend: relations.areFriends(u.id, other), matched: relations.isMatched(u.id, other), messages: list });
+          }
+          if (req.method !== 'POST') return json(res, 405, { error: 'method' });
+          const body = await readBody(req, 8 * 1024);
+          const other = String(body.userId ?? body.to ?? '');
+          if (!store.get(other)) return json(res, 404, { error: '상대를 찾을 수 없어' });
+          if (p === '/api/friends/request') {
+            const r = relations.request(u.id, other);
+            send(other, { t: 'social' });
+            return json(res, 200, r);
+          }
+          if (p === '/api/friends/respond') {
+            const r = relations.respond(u.id, other, !!body.accept);
+            send(other, { t: 'social' });
+            return json(res, 200, r);
+          }
+          if (p === '/api/friends/cancel') {
+            relations.cancel(u.id, other);
+            send(other, { t: 'social' });
+            return json(res, 200, { ok: true });
+          }
+          if (p === '/api/friends/remove') {
+            relations.unfriend(u.id, other);
+            send(other, { t: 'social' });
+            return json(res, 200, { ok: true });
+          }
+          if (p === '/api/block') {
+            if (body.unblock) relations.unblock(u.id, other);
+            else relations.block(u.id, other);
+            return json(res, 200, { ok: true });
+          }
+          if (p === '/api/messages') {
+            const m = relations.send(u.id, other, body.text);
+            const out = (mine) => ({ t: 'dm', peer: mine ? other : u.id, message: { id: m.id, mine, text: m.text, at: m.at } });
+            send(other, out(false));
+            send(u.id, out(true));
+            return json(res, 200, { message: { id: m.id, mine: true, text: m.text, at: m.at } });
+          }
+          return json(res, 404, { error: 'not found' });
+        } catch (e) {
+          if (e instanceof RelationError) return json(res, 400, { error: e.message });
+          throw e;
+        }
       }
       // ── 간편 로그인 ──
       if ((p === '/api/auth/google' || p === '/api/auth/apple') && req.method === 'POST') {
@@ -585,6 +681,7 @@ export function createServer(opts = {}) {
     server,
     rooms,
     store,
+    rel: relations,
     voice,
     config,
     listen(port) {

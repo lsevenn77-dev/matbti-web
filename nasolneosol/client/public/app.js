@@ -1,6 +1,6 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=21';
-import { AudioDirector } from './audio.js?v=21';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=22';
+import { AudioDirector } from './audio.js?v=22';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -253,6 +253,7 @@ function showLobby(status) {
   }
   renderWallet();
   renderAccount();
+  refreshSocialSoon();
   // 입장권은 방이 시작될 때 줄어드니 대기 화면에 올 때마다 새로 받아 온다
   if (!st.meFetchedAt || Date.now() - st.meFetchedAt > 5000) {
     st.meFetchedAt = Date.now();
@@ -295,13 +296,258 @@ addEventListener('keydown', (e) => {
 });
 for (const b of document.querySelectorAll('#tb-nav button')) {
   b.addEventListener('click', () => {
-    if (b.dataset.tab === 'guide') {
-      openModal('#modal-guide');
-      for (const x of document.querySelectorAll('#tb-nav button')) x.classList.toggle('on', x === b);
-    } else closeModals();
+    const tab = b.dataset.tab;
+    if (tab === 'lobby') return closeModals();
+    if (tab === 'guide') openModal('#modal-guide');
+    else openSocial(tab);
+    for (const x of document.querySelectorAll('#tb-nav button')) x.classList.toggle('on', x === b);
   });
 }
 $('#btn-settings').addEventListener('click', () => openModal('#modal-settings'));
+
+// ───────────── 친구 · 나의 인연 · 메시지 ─────────────
+// 규칙(서버와 같음): 친구 신청은 같은 게임에서 만난 사람에게만, 메시지는 친구이거나 최종 매칭된 상대끼리만
+const soc = { data: null, mode: 'friends', sub: 'list', dmWith: null, timer: null, loading: null };
+const GS = { male: '♂', female: '♀' };
+function ago(at) {
+  const s = Math.max(0, (Date.now() - at) / 1000);
+  if (s < 60) return '방금';
+  if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+  if (s < 86400) return `${Math.floor(s / 3600)}시간 전`;
+  return `${Math.floor(s / 86400)}일 전`;
+}
+function dateLabel(at) {
+  return new Date(at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+}
+function presence(c) {
+  if (c.isBot) return '<span class="st off">봇 (시험용)</span>';
+  if (c.inGame) return '<span class="st game">게임 중</span>';
+  return c.online ? '<span class="st on">온라인</span>' : '<span class="st off">오프라인</span>';
+}
+function personRow(c, actions = '', sub = '') {
+  return `<div class="person" data-id="${esc(c.id)}">
+    <img src="${esc(c.photoUrl)}" alt="" loading="lazy" />
+    <div class="p-text"><div class="p-name">${esc(c.alias || '이름 없음')} <span class="g ${c.gender}">${GS[c.gender] ?? ''}</span> <span class="p-age">${c.age}세</span></div>${sub || presence(c)}</div>
+    <div class="p-acts">${actions}</div>
+  </div>`;
+}
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
+  const j = r ? await r.json().catch(() => ({})) : { error: '연결이 끊겼어' };
+  if (!r?.ok) throw new Error(j.error || '실패했어');
+  return j;
+}
+async function loadSocial() {
+  if (!st.token) return null;
+  soc.loading ??= api('/api/social').then((d) => {
+    soc.data = d;
+    renderSocialBadges();
+    renderFriendsCard();
+    if (!$('#modal-social').hidden && $('#dm').hidden) renderSocial();
+    return d;
+  }).catch(() => null).finally(() => (soc.loading = null));
+  return soc.loading;
+}
+let socialRefresh = null;
+function refreshSocialSoon() {
+  clearTimeout(socialRefresh);
+  socialRefresh = setTimeout(loadSocial, 250);
+}
+function renderSocialBadges() {
+  const d = soc.data;
+  const set = (el, n) => { el.hidden = !n; el.textContent = n > 9 ? '9+' : n || ''; };
+  set($('#badge-friends'), d?.incoming.length ?? 0);
+  set($('#badge-msgs'), d?.unread ?? 0);
+}
+function renderFriendsCard() {
+  const d = soc.data;
+  if (!d) return;
+  $('#fc-count').textContent = `${d.friends.length}명`;
+  $('#fc-list').innerHTML = d.friends.length
+    ? d.friends.slice(0, 6).map((c) => personRow(c, `<button type="button" class="ic" data-act="chat" aria-label="대화하기">💬</button>`)).join('')
+    : `<p class="empty">아직 친구가 없어. 게임에서 만난 사람에게 친구 신청을 해 봐.</p>`;
+  bindPeople($('#fc-list'));
+}
+$('#btn-friend-add').addEventListener('click', () => openSocial('friends', 'met'));
+
+function openSocial(mode, sub) {
+  soc.mode = mode;
+  soc.sub = sub ?? (mode === 'friends' ? (soc.data?.incoming.length ? 'incoming' : 'list') : 'list');
+  openModal('#modal-social');
+  for (const x of document.querySelectorAll('#tb-nav button')) x.classList.toggle('on', x.dataset.tab === mode);
+  closeDm();
+  renderSocial();
+  loadSocial();
+  clearInterval(soc.timer);
+  soc.timer = setInterval(() => (!$('#modal-social').hidden ? loadSocial() : clearInterval(soc.timer)), 20000);
+}
+
+function renderSocial() {
+  const d = soc.data;
+  const titles = { friends: '👥 친구', matches: '💗 나의 인연', messages: '💬 메시지' };
+  $('#soc-title').textContent = titles[soc.mode];
+  const tabs = soc.mode === 'friends'
+    ? [['list', `친구 목록${d ? ` ${d.friends.length}` : ''}`], ['incoming', `받은 신청${d?.incoming.length ? ` ${d.incoming.length}` : ''}`], ['met', '함께한 사람']]
+    : [];
+  $('#soc-tabs').innerHTML = tabs.map(([k, l]) => `<button type="button" data-sub="${k}" class="${soc.sub === k ? 'on' : ''}">${esc(l)}</button>`).join('');
+  $('#soc-tabs').hidden = !tabs.length;
+  for (const b of document.querySelectorAll('#soc-tabs button')) b.onclick = () => { soc.sub = b.dataset.sub; renderSocial(); };
+  const body = $('#soc-body');
+  if (!d) return (body.innerHTML = '<p class="empty">불러오는 중…</p>');
+  let html = '';
+  if (soc.mode === 'friends' && soc.sub === 'list') {
+    html = d.friends.length
+      ? d.friends.map((c) => personRow(c, `<button type="button" class="ic" data-act="chat" aria-label="대화하기">💬</button>`)).join('')
+      : '<p class="empty">아직 친구가 없어.<br>"함께한 사람"에서 게임에서 만난 사람에게 친구 신청을 할 수 있어.</p>';
+  } else if (soc.mode === 'friends' && soc.sub === 'incoming') {
+    html = d.incoming.length
+      ? d.incoming.map((c) => personRow(c, `<button type="button" class="pill-btn pk" data-act="accept">수락</button><button type="button" class="pill-btn" data-act="decline">거절</button>`, `<span class="st">${ago(c.at)} 신청</span>`)).join('')
+      : '<p class="empty">받은 친구 신청이 없어.</p>';
+  } else if (soc.mode === 'friends' && soc.sub === 'met') {
+    html = d.met.length
+      ? `<p class="hint">같은 게임에서 만난 사람에게만 친구 신청을 할 수 있어.</p>` + d.met.map((c) => personRow(c,
+        c.friend ? '<span class="tag">친구</span>' : c.requested ? '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>' : '<button type="button" class="pill-btn pk" data-act="request">친구 신청</button>',
+        `<span class="st">${dateLabel(c.at)} 함께함</span>`)).join('')
+      : '<p class="empty">아직 함께한 사람이 없어. 게임을 한 판 하면 여기에 나와.</p>';
+  } else if (soc.mode === 'matches') {
+    html = `<p class="hint">서로를 최종 선택한 상대야. 게임 밖 1:1 대화에서 원할 때 연락처를 나눌 수 있어.</p>` + (d.matches.length
+      ? d.matches.map((c) => personRow(c, `<button type="button" class="pill-btn pk" data-act="chat">대화하기</button>`, `<span class="tag pk">매칭 성공 💗</span> <span class="st">${dateLabel(c.at)} 게임</span>`)).join('')
+      : '<p class="empty">아직 매칭된 인연이 없어. 최종 선택에서 서로를 고르면 여기에 나와.</p>');
+  } else if (soc.mode === 'messages') {
+    html = d.threads.length
+      ? d.threads.map((c) => personRow(c, c.unread ? `<i class="badge on">${c.unread}</i>` : '', `<span class="last">${c.last.mine ? '나: ' : ''}${esc(c.last.text)}</span> <span class="st">· ${ago(c.last.at)}</span>`)).join('')
+      : '<p class="empty">아직 대화가 없어. 친구나 매칭된 상대에게 먼저 말을 걸어 봐.</p>';
+  }
+  body.innerHTML = html;
+  bindPeople(body, soc.mode === 'messages');
+}
+
+function bindPeople(root, rowOpensChat = false) {
+  for (const row of root.querySelectorAll('.person')) {
+    const id = row.dataset.id;
+    if (rowOpensChat) row.onclick = () => openDm(id);
+    for (const b of row.querySelectorAll('[data-act]')) {
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        const act = b.dataset.act;
+        if (act === 'chat') {
+          if ($('#modal-social').hidden) openSocial('messages');
+          return openDm(id);
+        }
+        b.disabled = true;
+        try {
+          if (act === 'request') {
+            const r = await api('/api/friends/request', { userId: id });
+            toastLobby(r.status === 'friends' ? '서로 신청해서 바로 친구가 됐어!' : '친구 신청을 보냈어');
+          }
+          if (act === 'cancel') await api('/api/friends/cancel', { userId: id });
+          if (act === 'accept') { await api('/api/friends/respond', { userId: id, accept: true }); toastLobby('친구가 됐어!'); }
+          if (act === 'decline') await api('/api/friends/respond', { userId: id, accept: false });
+        } catch (err) {
+          toastLobby(err.message);
+        }
+        await loadSocial();
+        renderSocial();
+      };
+    }
+  }
+}
+
+async function openDm(id) {
+  soc.dmWith = id;
+  $('#soc-tabs').hidden = true;
+  $('#soc-body').hidden = true;
+  $('#dm').hidden = false;
+  $('#dm-menu').hidden = true;
+  $('#dm-log').innerHTML = '<p class="empty">불러오는 중…</p>';
+  try {
+    const j = await api(`/api/messages?with=${encodeURIComponent(id)}`);
+    if (soc.dmWith !== id) return;
+    const c = j.peer;
+    $('#dm-photo').src = c.photoUrl;
+    $('#dm-name').textContent = `${c.alias || '이름 없음'} · ${c.age}세`;
+    $('#dm-state').innerHTML = `${j.matched ? '💗 매칭 · ' : j.friend ? '친구 · ' : ''}${presence(c)}`;
+    $('#dm-unfriend').hidden = !j.friend;
+    $('#dm-form').hidden = !j.canMessage;
+    $('#dm-note').textContent = j.canMessage ? '상대를 존중해 줘. 불쾌한 대화는 ⋯ 에서 차단할 수 있어.' : '친구이거나 최종 매칭된 상대에게만 메시지를 보낼 수 있어.';
+    $('#dm-log').innerHTML = j.messages.length ? '' : '<p class="empty">첫 메시지를 보내 봐 👋</p>';
+    for (const m of j.messages) appendDm(m);
+    if (j.canMessage && matchMedia('(pointer: fine)').matches) $('#dm-input').focus();
+    loadSocial(); // 읽음 처리 반영
+  } catch (err) {
+    $('#dm-log').innerHTML = `<p class="empty">${esc(err.message)}</p>`;
+  }
+}
+function appendDm(m) {
+  const log = $('#dm-log');
+  log.querySelector('.empty')?.remove();
+  if (log.querySelector(`[data-mid="${m.id}"]`)) return;
+  const el = document.createElement('div');
+  el.className = `bubble ${m.mine ? 'me' : 'you'}`;
+  el.dataset.mid = m.id;
+  el.innerHTML = `<span class="txt"></span><time>${new Date(m.at).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })}</time>`;
+  el.querySelector('.txt').textContent = m.text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+}
+function closeDm() {
+  soc.dmWith = null;
+  $('#dm').hidden = true;
+  $('#soc-body').hidden = false;
+  $('#soc-tabs').hidden = soc.mode !== 'friends';
+}
+$('#dm-back').addEventListener('click', () => { closeDm(); renderSocial(); });
+$('#dm-more').addEventListener('click', () => ($('#dm-menu').hidden = !$('#dm-menu').hidden));
+$('#dm-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = $('#dm-input');
+  const text = input.value.trim();
+  if (!text || !soc.dmWith) return;
+  try {
+    const j = await api('/api/messages', { to: soc.dmWith, text });
+    input.value = '';
+    appendDm(j.message);
+  } catch (err) {
+    toastLobby(err.message);
+  }
+});
+$('#dm-unfriend').addEventListener('click', async () => {
+  if (!soc.dmWith || !confirm('친구를 끊을까? 다시 친구가 되려면 함께한 사람 목록에서 신청해야 해.')) return;
+  await api('/api/friends/remove', { userId: soc.dmWith }).catch((err) => toastLobby(err.message));
+  closeDm();
+  await loadSocial();
+  renderSocial();
+});
+$('#dm-block').addEventListener('click', async () => {
+  if (!soc.dmWith || !confirm('이 사람을 차단할까? 서로 메시지와 친구 신청을 보낼 수 없게 되고 목록에서 사라져.')) return;
+  await api('/api/block', { userId: soc.dmWith }).catch((err) => toastLobby(err.message));
+  closeDm();
+  await loadSocial();
+  renderSocial();
+  toastLobby('차단했어');
+});
+function onDm(m) {
+  if (soc.dmWith === m.peer && !$('#modal-social').hidden && !$('#dm').hidden) {
+    appendDm(m.message);
+    if (!m.message.mine) api(`/api/messages?with=${encodeURIComponent(m.peer)}`).then(() => loadSocial()).catch(() => {}); // 읽음 처리
+  } else {
+    refreshSocialSoon();
+    if (!m.message.mine && !st.view) toastLobby('💬 새 메시지가 왔어');
+  }
+}
+function toastLobby(text) {
+  let el = $('#lobby-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'lobby-toast';
+    el.className = 'lobby-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2600);
+}
 $('#btn-queue').addEventListener('click', () => sendWs({ t: $('#btn-queue').dataset.in ? 'queue.leave' : 'queue.join' }));
 $('#btn-bots').addEventListener('click', async () => {
   if (!$('#btn-queue').dataset.in) sendWs({ t: 'queue.join' });
@@ -533,6 +779,10 @@ function onMessage(m) {
     st.scene?.applyPose(m.id, m);
   } else if (m.t === 'chat') {
     addChat(m.message);
+  } else if (m.t === 'social') {
+    refreshSocialSoon();
+  } else if (m.t === 'dm') {
+    onDm(m);
   } else if (m.t === 'ack') {
     st.pending.get(m.reqId)?.(m);
     st.pending.delete(m.reqId);
