@@ -60,3 +60,10 @@ code { font-size: 12px; background: #f6edf1; padding: 1px 5px; border-radius: 6p
   .stats { grid-template-columns: repeat(3, 1fr); }
   .people { grid-template-columns: 1fr; }
 }
+
+#capacity-controls { padding: 1rem; margin-bottom: 1rem; background: white; border-radius: .8rem; }
+#capacity-controls summary { cursor: pointer; font-weight: 600; }
+#capacity-form, #threshold-fields { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; margin: .7rem 0; }
+#capacity-form input[type=number] { width: 5rem; }
+#capacity-details { display: grid; grid-template-columns: minmax(9rem,auto) 1fr; gap: .35rem 1rem; }
+#capacity-details dd { margin: 0; overflow-wrap: anywhere; }

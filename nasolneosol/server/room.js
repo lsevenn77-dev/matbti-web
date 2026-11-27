@@ -876,7 +876,7 @@ export class Room {
     return m ? m.find((x) => x !== pid) : null;
   }
 
-  viewFor(pid) {
+  viewFor(pid, voice = this.voicePerms()) {
     const me = this.participants.get(pid);
     const t = this.now();
     const v = {
@@ -896,8 +896,8 @@ export class Room {
       roaming: [...this.participants.keys()].filter((id) => this.canRoam(id)),
       positions: Object.fromEntries([...this.participants.values()].filter((p) => p.pos && this.canRoam(p.id)).map((p) => [p.id, p.pos])),
       channels: this.channelsFor(pid),
-      voice: this.voicePerms()[pid],
-      speakingIds: Object.entries(this.voicePerms()).filter(([, v2]) => v2.publish).map(([k]) => k),
+      voice: voice[pid],
+      speakingIds: Object.entries(voice).filter(([, v2]) => v2.publish).map(([k]) => k),
       settings: {
         dateRounds: this.cfg.randomDate.enabled ? 4 : 3,
         ticketsPerGender: this.cfg.pick.ticketsPerGender,

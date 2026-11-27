@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex, nofollow" />
   <title>관리자 · 나솔너솔</title>
   <link rel="icon" href="/icons/icon-192.png" />
-  <link rel="stylesheet" href="/admin.css?v=1" />
+  <link rel="stylesheet" href="/admin.css?v=2" />
 </head>
 <body>
   <header class="bar">
@@ -31,6 +31,14 @@
     <!-- 관리 -->
     <section id="panel" hidden>
       <div class="stats" id="stats"></div>
+      <details id="capacity-controls" hidden><summary>서버 입장 설정</summary>
+        <label>관리 서버 <select id="managed-server"></select></label>
+        <form id="capacity-form"><label><input type="checkbox" name="enabled">활성화</label><label>최대 방 <input name="maxRooms" type="number" min="0" required></label>
+        <label>최대 인원 <input name="maxPlayers" type="number" min="0" required></label>
+        <label><input type="checkbox" name="maintenance">점검</label>
+        <label><input type="checkbox" name="blocked">신규 입장 차단</label>
+        <details><summary>보호 기준</summary><div id="threshold-fields"></div></details>
+        <button type="submit">저장</button></form><dl id="capacity-details"></dl><details><summary>제한 및 설정 이력</summary><ol id="capacity-audit"></ol></details></details>
       <nav class="tabs" id="tabs">
         <button type="button" data-tab="open" class="on">접수된 신고</button>
         <button type="button" data-tab="resolved">처리 완료</button>
@@ -42,6 +50,6 @@
     </section>
   </main>
   <div id="toast" class="toast" hidden></div>
-  <script type="module" src="/admin.js?v=1"></script>
+  <script type="module" src="/admin.js?v=2"></script>
 </body>
 </html>

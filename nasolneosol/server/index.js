@@ -15,12 +15,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { makeConfig, PRESETS, estimateMinutes } from './config.js';
+import { RoomWorker } from './room-worker-client.js';
+import { makeGate } from './capacity.js';
 import { Room } from './room.js';
 import { MockVoiceAdapter } from './voice.js';
 import { FileStore, decodeDataUrl, validateProfile } from './store.js';
 import { BotDriver, botProfile, botPhotoSvg } from './bots.js';
 import { formGroup, needFor } from './matcher.js';
-import { PRODUCTS, entryStatus, canEnter, consumeEntry, grantProduct } from './wallet.js';
+import { PRODUCTS, entryStatus, canEnter, consumeEntry, refundEntry, grantProduct } from './wallet.js';
 import { socialConfig, verifyGoogle, verifyApple, verifyKakaoCode, kakaoAuthorizeUrl, SocialAuthError } from './social.js';
 import { payConfig, newOrderId, niceApprove } from './payments.js';
 import { Relations, RelationError } from './relations.js';
@@ -64,7 +66,100 @@ export function createServer(opts = {}) {
   const userRoom = new Map();
   let roomSeq = 0;
   let botSeq = 0;
+  const size = config.slots.male + config.slots.female;
+  const managed = env.CAPACITY_MANAGED === '1';
+  const ids = managed ? (env.GAME_SERVERS || '1,2').split(',').map(x=>x.trim()) : ['1'];
+  if (new Set(ids).size !== ids.length || ids.some(id=>!/^\d{1,4}$/.test(id))) throw new Error('Invalid GAME_SERVERS');
+  // Room state is transient. The debit and its recovery marker share one atomic users.json write.
+  if (managed && store.dir) {
+    let reconciled = false;
+    for (const user of store.users.values()) {
+      const pending = user.pendingGameEntry;
+      if (!pending) continue;
+      if (!/^r[a-z0-9]+$/.test(pending.roomId) || !['free','sub','ticket'].includes(pending.kind)) {
+        throw new Error('Invalid outstanding room entry');
+      }
+      if (!store.hasGameRecord(pending.roomId)) refundEntry(user, pending.kind);
+      delete user.pendingGameEntry;
+      reconciled = true;
+    }
+    if (reconciled) store.persist();
+  }
+  const first = ids[0];
+  const workers = new Map();
+  const restartDelays = new Map();
+  const restartTimers = new Map();
+  let shuttingDown=false;
+  const gates = new Map(ids.map(id=>[id,makeGate(id,env,size,managed,store.dir)]));
+  function workerEvent(serverId,m) {
+    const entry=rooms.get(m.id);
+    if(!entry || entry.serverId!==serverId || !entry.worker) return;
+    const { room }=entry;
+    if(m.kind==='opened') { entry.opened=true; return; }
+    if(m.kind==='deliver' && userRoom.get(m.userId)===m.id) {
+      if(m.body.t==='state') entry.views.set(m.userId,m.body.view);
+      send(m.userId,m.body);
+    }
+    if(m.kind==='fanout') {
+      for(const uid of m.users) if(userRoom.get(uid)===m.id) send(uid,m.body);
+    }
+    if(m.kind==='evidence') {
+      room.chat.push(m.message);
+      if(room.chat.length>1000) room.chat.shift();
+    }
+    if(m.kind==='finished') {
+      entry.mockVoiceOps=m.mockVoiceOps;entry.remainingTracks=m.remainingTracks;
+      room.events=m.events;room.matches=m.matches;room.phase='ended';
+    }
+  }
+  function settleEntry(userId, roomId, refund) {
+    const user = store.get(userId);
+    if (user?.pendingGameEntry?.roomId !== roomId) return;
+    if (refund) refundEntry(user, user.pendingGameEntry.kind);
+    delete user.pendingGameEntry;
+  }
 
+  function workerFailed(serverId) {
+    let changed = false;
+    for(const [id,entry] of rooms) {
+      if(entry.serverId!==serverId || !entry.worker || entry.room.phase==='ended') continue;
+      for(const c of entry.chosen) {
+        settleEntry(c.userId,id,true);
+        changed = true;
+        if(userRoom.get(c.userId)===id) userRoom.delete(c.userId);
+        send(c.userId,{t:'roomUnavailable',error:'게임 서버 연결이 종료됐어. 대기화면에서 다시 입장해 줘.'});
+      }
+      rooms.delete(id);
+    }
+    if (changed) store.persist();
+    if (!shuttingDown) broadcastQueue();
+  }
+  function connectWorker(id,target) {
+    workers.set(id,new RoomWorker(target,m=>{
+      if(m.kind==='opened') restartDelays.delete(id);
+      workerEvent(id,m);
+    },()=>{
+      workerFailed(id);
+      if(shuttingDown) return;
+      gates.get(id).invalidate('게임 서버 연결 종료');
+      const delay=Math.min((restartDelays.get(id) || 2500)*2,60000);
+      restartDelays.set(id,delay);
+      restartTimers.set(id,setTimeout(()=>connectWorker(id,target),delay));
+    }));
+  }
+  if (managed) for(const id of ids) {
+    const target=opts.dataDir===null ? 'local' : env['GAME_WORKER_'+id];
+    if(target) connectWorker(id,target);
+  }
+  function capacity(id=first, extra=1, forming=false) {
+    const active = [...rooms.values()].filter(entry => entry.serverId===id && entry.room.phase!=='ended').length;
+    const queued = queue.filter(q => (q.serverId ?? first)===id).length;
+    const snapshot=gates.get(id).snapshot(active,queued,extra,forming);
+    if (managed && !workers.get(id)?.ready && snapshot.status!=='점검') {
+      return {...snapshot,status:'FULL',reason:'게임 서버 연결 확인 중'};
+    }
+    return snapshot;
+  }
   // ── 대기열 ──────────────────────────────────────────
   /** 대기열 + 최신 프로필 (나이 조건 매칭용) */
   function queueEntries() {
@@ -73,10 +168,11 @@ export function createServer(opts = {}) {
 
   function queueStatus(userId) {
     const g = { male: 0, female: 0 };
-    for (const q of queue) g[q.gender]++;
-    const entries = queueEntries();
+    const selected = queue.find(q=>q.userId===userId)?.serverId ?? first;
+    const entries = queueEntries().filter(q=>(q.serverId ?? first)===selected);
+    for (const q of entries) g[q.gender]++;
     const me = entries.find((q) => q.userId === userId);
-    const st = { inQueue: !!me, male: g.male, female: g.female, need: config.slots, total: { ...g } };
+    const st = { serverId: selected, serverStatus: capacity(selected).status, inQueue: !!me, male: g.male, female: g.female, need: config.slots, total: { ...g } };
     if (me) {
       // 내 나이 조건과 서로 맞는 사람만 센 인원과 남은 인원
       const n = needFor(entries, config.slots, me);
@@ -87,18 +183,21 @@ export function createServer(opts = {}) {
     return st;
   }
 
-  function joinQueue(user) {
+  function joinQueue(user, serverId=first) {
+    if (!gates.has(serverId)) return send(user.id,{t:"queueError",error:"서버를 다시 선택해 줘"});
     if (userRoom.has(user.id) || queue.some((q) => q.userId === user.id)) return;
     const party = partyOf(user.id);
-    if (party) return joinQueueParty(user, party);
+    if (party) return joinQueueParty(user, party, serverId);
+    const gate = capacity(serverId);
+    if (gate.reason) return send(user.id, { t: 'queueError', error: gate.status });
     if (!canEnter(user)) return send(user.id, { t: 'queueError', error: '오늘 남은 입장권이 없어. 입장권을 사거나 내일 다시 와 줘.' });
-    queue.push({ userId: user.id, gender: user.profile.gender, at: Date.now() });
+    queue.push({ serverId, userId: user.id, gender: user.profile.gender, at: Date.now() });
     tryFormRoom();
     broadcastQueue();
   }
 
   /** 동반 입장: 일행 모두 조건이 될 때만 함께 대기열에 넣는다 */
-  function joinQueueParty(user, party) {
+  function joinQueueParty(user, party, serverId) {
     const err = (m) => send(user.id, { t: 'queueError', error: m, party: true });
     for (const id of party.members) {
       const u = store.get(id);
@@ -106,12 +205,15 @@ export function createServer(opts = {}) {
       if (!u) return err('함께 입장하는 친구를 찾을 수 없어');
       if (userRoom.has(id)) return err('함께 입장하는 친구가 아직 게임 중이야');
       if (!u.isBot && !isOnline(id)) return err('함께 입장하는 친구가 접속해 있지 않아');
+      if (queue.some(q => q.userId === id && (q.serverId !== serverId || q.partyId !== party.id))) return err('함께 입장하는 친구가 다른 대기열에 있어');
       if (!canEnter(u)) return err(`${who} 남은 입장권이 없어`);
     }
+    const gate = capacity(serverId, party.members.filter((id) => !inQueue(id)).length);
+    if (gate.reason) return err(gate.status);
     const at = Date.now();
     for (const id of party.members) {
       if (queue.some((q) => q.userId === id)) continue;
-      queue.push({ userId: id, gender: store.get(id).profile.gender, at, partyId: party.id });
+      queue.push({ serverId, userId: id, gender: store.get(id).profile.gender, at, partyId: party.id });
     }
     tryFormRoom();
     broadcastQueue();
@@ -119,7 +221,9 @@ export function createServer(opts = {}) {
 
   function leaveQueue(userId) {
     // 동반 입장 일행은 함께 빠진다
-    const pid = queue.find((q) => q.userId === userId)?.partyId;
+    const entry = queue.find((q) => q.userId === userId);
+    if (!entry) return;
+    const pid = entry.partyId;
     for (let i = queue.length - 1; i >= 0; i--) {
       if (queue[i].userId === userId || (pid && queue[i].partyId === pid)) queue.splice(i, 1);
     }
@@ -224,29 +328,46 @@ export function createServer(opts = {}) {
   }
 
   function tryFormRoom() {
+    for (const id of ids) tryServer(id);
+  }
+  function tryServer(serverId) {
+    if (capacity(serverId, 0, true).reason) return;
     // 선착순 + 나이 조건: 방 안의 모든 남녀 쌍이 서로의 나이 범위 안에 들어야 한다
     // 입장권이 남아 있는 사람만 (대기 중에 날짜가 바뀌는 등)
     const ok = (id) => { const u = store.get(id); return !!u && canEnter(u); };
     // 동반 입장 일행은 한 명이라도 입장권이 없으면 일행 전체를 이번 방 후보에서 뺀다
-    const group = formGroup(queueEntries().filter((q) => (q.partyId ? queue.filter((x) => x.partyId === q.partyId).every((x) => ok(x.userId)) : ok(q.userId))), config.slots);
+    const group = formGroup(queueEntries().filter(q=>(q.serverId ?? first)===serverId).filter((q) => (q.partyId ? queue.filter((x) => x.partyId === q.partyId).every((x) => ok(x.userId)) : ok(q.userId))), config.slots);
     if (!group) return;
     const ids = new Set(group.map((c) => c.userId));
     const chosen = queue.filter((q) => ids.has(q.userId));
     // 방에 들어가면 받은 동반 초대는 의미가 없다
     for (const c of chosen) partyInvites.delete(c.userId);
     for (const c of chosen) queue.splice(queue.indexOf(c), 1);
+    const id = `r${Date.now().toString(36)}${(++roomSeq).toString(36)}`;
     // 방이 시작될 때 입장권 1회 사용
     for (const c of chosen) {
       const u = store.get(c.userId);
-      if (u && !u.isBot) c.used = consumeEntry(u);
+      if (u && !u.isBot) {
+        const kind = consumeEntry(u);
+        if (managed && kind) u.pendingGameEntry = { roomId: id, kind };
+      }
     }
     store.persist();
-    const id = `r${Date.now().toString(36)}${(++roomSeq).toString(36)}`;
     const members = chosen.map((c) => {
       const u = store.get(c.userId);
       return { userId: u.id, profile: u.profile, isBot: u.isBot };
     });
     const room = new Room({ id, config, members, timeScale, voice });
+    const worker=workers.get(serverId);
+    if(worker) {
+      rooms.set(id,{serverId,room,worker,chosen,views:new Map(),openingAt:Date.now()});
+      for(const c of chosen) {
+        userRoom.set(c.userId,id);
+        room.setConnected(room.pidOfUser(c.userId),isOnline(c.userId));
+      }
+      worker.write({kind:'open',input:{id,config,members,timeScale}});
+      return;
+    }
     // 정상 속도에서는 봇도 사람처럼 시간을 쓴다 (빨리 넘기려면 화면 위 '다음 단계' 버튼)
     const realistic = timeScale === 1 && env.BOT_PACE !== 'fast';
     const bots = new BotDriver(room, { introSec: env.BOT_INTRO_SEC ? Number(env.BOT_INTRO_SEC) : realistic ? null : 8, realistic });
@@ -265,7 +386,7 @@ export function createServer(opts = {}) {
         }
       }
     });
-    rooms.set(id, { room, bots });
+    rooms.set(id, { room, bots, serverId });
     for (const p of room.participants.values()) {
       userRoom.set(p.userId, id);
       room.setConnected(p.id, p.isBot || (sockets.get(p.userId)?.size ?? 0) > 0);
@@ -282,14 +403,21 @@ export function createServer(opts = {}) {
     for (const ws of set) if (ws.readyState === 1) ws.send(s);
   }
 
+  let queueUpdate;
   function broadcastQueue() {
+    if(!managed) return flushQueue();
+    if(!queueUpdate) queueUpdate=setTimeout(()=>{queueUpdate=null;flushQueue();},100);
+  }
+  function flushQueue() {
+    const waiting=new Set(queue.map(q=>q.userId));
+    const common=queueStatus(null);
     for (const userId of sockets.keys()) {
-      if (!userRoom.has(userId)) send(userId, { t: 'queue', status: queueStatus(userId) });
+      if (!userRoom.has(userId)) send(userId, { t: 'queue', status: waiting.has(userId)?queueStatus(userId):common });
     }
   }
 
-  function sendState(room, p) {
-    send(p.userId, { t: 'state', view: room.viewFor(p.id) });
+  function sendState(room, p, permissions) {
+    send(p.userId, { t: 'state', view: room.viewFor(p.id,permissions) });
   }
 
   // ── 관리자 (신고 처리 · 이용 정지) ──
@@ -323,11 +451,53 @@ export function createServer(opts = {}) {
     };
   }
   async function handleAdmin(req, res, p, url) {
-    const a = adminOk(req);
-    if (!a.ok) return json(res, a.code, { error: a.error });
+    const serverId = url.searchParams.get('server') ?? first;
+    const monitorKey = Buffer.from(String(env['MONITOR_KEY_'+serverId] ?? ''));
+    const given = Buffer.from(String(req.headers['x-monitor-key'] ?? ''));
+    const monitoring = req.method==='POST' && p==='/api/admin/health-sample' &&
+      monitorKey.length>=24 && given.length===monitorKey.length && timingSafeEqual(given,monitorKey);
+    if(!monitoring) {
+      const auth=adminOk(req);
+      if(!auth.ok) return json(res,auth.code,{error:auth.error});
+    }
+    const gate = gates.get(serverId);
+    if (!gate) return json(res,404,{error:'등록되지 않은 서버'});
+    if (p === '/api/admin/capacity' && req.method === 'GET') {
+      const snapshot = capacity(serverId);
+      pruneLobby(Date.now());
+      return json(res, 200, { ...snapshot, ...gate.details(), managed, ids, connections: wss.clients.size,
+        lobbyTabs:lobbyTabs.size, lobbyCountLimited:Date.now()-presenceOverflowAt<45000,
+        workerHost:workers.get(serverId)?.host ?? null,
+        gameLatency:workers.get(serverId)?.recentActions() ?? {},
+        workerRss: workers.get(serverId)?.rss ?? null,
+        workerRxBytes: workers.get(serverId)?.received ?? null, workerTxBytes: workers.get(serverId)?.sent ?? null,
+        lobbyAccounts:[...sockets.keys()].filter(uid=>!userRoom.has(uid) && !inQueue(uid)).length,
+        serverConnections:[...sockets].reduce((n,[uid,set])=>n+((rooms.get(userRoom.get(uid))?.serverId===serverId ||
+          queue.some(q=>q.userId===uid && q.serverId===serverId)) ? set.size : 0),0),
+        onlineAccounts: sockets.size, processRss: process.memoryUsage().rss });
+    }
+    if (managed && req.method === 'POST' && ['/api/admin/capacity','/api/admin/health-sample'].includes(p)) {
+      const body=await readBody(req,2048);
+      try {
+        if (p.endsWith('capacity')) gate.configure(body);
+        else {
+          const game = workers.get(serverId)?.recentActions();
+          if (game?.gameP95Ms !== undefined && body && typeof body === 'object' &&
+              (!body.details || typeof body.details === 'object' && !Array.isArray(body.details))) {
+            body.details = { ...body.details, ...game };
+          }
+          gate.sample(body);
+        }
+      } catch (err) { if (err instanceof RangeError) return json(res,400,{error:err.message}); throw err; }
+      tryServer(serverId);
+      if (p.endsWith('capacity')) broadcastQueue();
+      return json(res,200,capacity(serverId));
+    }
     if (p === '/api/admin/summary' && req.method === 'GET') {
       const users = [...store.users.values()].filter((u) => !u.isBot);
       return json(res, 200, {
+        serverStatus: capacity().status,
+        connections: wss.clients.size,
         users: users.length,
         online: users.filter((u) => isOnline(u.id)).length,
         queue: queue.length,
@@ -412,21 +582,42 @@ export function createServer(opts = {}) {
   }
 
   // ── 게임 루프 ───────────────────────────────────────
+  let lastSweep = 0;
   const loop = setInterval(() => {
-    for (const [id, { room, bots }] of rooms) {
+    if (managed && Date.now()-lastSweep >= 1000) {
+      lastSweep=Date.now();
+      for(const id of ids) gates.get(id).noteReason(capacity(id).reason);
+      const expired=queue.filter(q => lastSweep-q.at >= gates.get(q.serverId).policy.queueTtlSeconds*1000);
+      for (const q of expired) if (inQueue(q.userId)) leaveQueue(q.userId);
+    }
+    for (const [id, entry] of rooms) {
+      const { room, bots, worker } = entry;
+      if (worker && !entry.opened && Date.now() - entry.openingAt > 15000) {
+        worker.stop();
+        continue;
+      }
+      if(!worker) {
       bots.tick();
       room.tick();
       if (room.dirty) {
         room.dirty = false;
-        for (const p of room.participants.values()) if (!p.isBot) sendState(room, p);
+        const permissions=room.voicePerms();
+        for (const p of room.participants.values()) if (!p.isBot) sendState(room, p, permissions);
+      }
       }
       if (room.phase === 'ended' && !room.archived) {
         room.archived = true;
         store.saveGameRecord(id, { id, config: room.cfg, events: room.events, matches: room.matches });
         recordRelations(id, room);
+        if (worker) {
+          for (const c of entry.chosen) settleEntry(c.userId, id, false);
+          store.persist();
+        }
         // 기록 저장 후 일정 시간 뒤 방 정리 (결과 화면은 클라이언트가 유지)
         setTimeout(() => {
-          for (const p of room.participants.values()) userRoom.delete(p.userId);
+          for (const p of room.participants.values()) {
+            if (userRoom.get(p.userId) === id) userRoom.delete(p.userId);
+          }
           voice.close(id);
           rooms.delete(id);
         }, 10 * 60 * 1000).unref();
@@ -558,10 +749,42 @@ export function createServer(opts = {}) {
     return { status: 200, body: { signupTicket: ticket, provider: ident.provider } };
   }
 
+  const lobbyTabs = new Map();
+  let presenceOverflowAt=0;
+  function pruneLobby(now) {
+    for(const [id,at] of lobbyTabs) {
+      if(now-at<45000) break;
+      lobbyTabs.delete(id);
+    }
+  }
+  let publicSnapshot;
+  let publicUntil=0;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     try {
+      if (managed && p==='/api/lobby-presence' && req.method==='POST') {
+        const packet=await readBody(req,256);
+        if (!packet || !/^[a-f0-9-]{36}$/.test(packet.id) || typeof packet.visible!=='boolean')
+          return json(res,400,{error:'invalid presence'});
+        const now=Date.now();
+        pruneLobby(now);
+        lobbyTabs.delete(packet.id);
+        if(packet.visible) {
+          if(lobbyTabs.size>=50000) {presenceOverflowAt=now;return json(res,429,{ok:false});}
+          lobbyTabs.set(packet.id,now);
+        }
+        res.writeHead(204,{'Cache-Control':'no-store'});return res.end();
+      }
+      if (p === '/api/server-status' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=5' });
+        if(Date.now()>=publicUntil) {
+          const servers=ids.filter(id=>gates.get(id).policy.enabled).map(id=>({id,status:capacity(id).status}));
+          publicSnapshot=JSON.stringify({status:capacity().status,servers});
+          publicUntil=Date.now()+5000;
+        }
+        return res.end(publicSnapshot);
+      }
       if (p === '/api/signup' && req.method === 'POST') {
         const body = await readBody(req);
         const profile = validateProfile(body, { minAge: config.minAge });
@@ -839,12 +1062,17 @@ export function createServer(opts = {}) {
           },
           pay: { nice: !!(pay.clientKey && pay.secretKey), mock: devTools && !(pay.clientKey && pay.secretKey), products: Object.values(PRODUCTS) },
           // 자동 업데이트가 게임 중에는 재시작하지 않도록: 사람이 들어 있는 진행 중인 방 수
-          activeRooms: [...rooms.values()].filter(({ room }) => room.phase !== 'ended' && [...room.participants.values()].some((x) => !x.isBot && x.connected)).length,
+          managedCapacity:managed,
+          activeRooms: [...rooms.values()].filter(({room})=>room.phase!=='ended' &&
+            (managed || [...room.participants.values()].some(p=>!p.isBot && p.connected))).length,
+          ...(managed ? {updateSafe:queue.length===0 && [...rooms.values()].every(e=>e.room.phase==='ended') &&
+            ids.every(id=>{const p=gates.get(id).policy;return !p.enabled || p.blocked || p.maintenance;})} : {}),
         });
       }
       if (p === '/api/dev/fill-bots' && req.method === 'POST') {
         if (!devTools) return json(res, 403, { error: 'DEV_TOOLS 꺼짐' });
         // 대기 중인 사람들의 나이 조건에 모두 맞는 나이로 봇을 만든다 (봇은 나이 조건 없음)
+        if (managed) return json(res, 403, { error: '관리 서버에서는 봇 채우기 제한' });
         const humans = queueEntries().filter((q) => !store.get(q.userId)?.isBot);
         let lo = config.minAge;
         let hi = 80;
@@ -904,7 +1132,7 @@ export function createServer(opts = {}) {
     let user = null;
     const hello = setTimeout(() => ws.close(4001, 'no hello'), 5000);
 
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       let msg;
       try {
         msg = JSON.parse(raw);
@@ -932,16 +1160,19 @@ export function createServer(opts = {}) {
         const rid = userRoom.get(user.id);
         if (rid && rooms.has(rid)) {
           // 재접속: 서버 최신 단계로 복구
-          const { room } = rooms.get(rid);
+          const { room, worker, views } = rooms.get(rid);
           const pid = room.pidOfUser(user.id);
           room.setConnected(pid, true);
-          sendState(room, room.participants.get(pid));
+          if(worker) {
+            if(room.phase==='ended' && views.has(user.id)) send(user.id,{t:'state',view:views.get(user.id)});
+            else worker.write({kind:'connected',id:rid,pid,connected:true});
+          } else sendState(room, room.participants.get(pid));
         } else {
           ws.send(JSON.stringify({ t: 'queue', status: queueStatus(user.id) }));
         }
         return;
       }
-      if (msg.t === 'queue.join') return joinQueue(user);
+      if (msg.t === 'queue.join') return joinQueue(user, msg.serverId);
       if (msg.t === 'queue.leave') return leaveQueue(user.id);
       if (msg.t === 'party.invite' || msg.t === 'party.respond' || msg.t === 'party.leave') {
         try {
@@ -960,13 +1191,13 @@ export function createServer(opts = {}) {
         const entry = rid && rooms.get(rid);
         if (!entry) return ws.send(JSON.stringify({ t: 'ack', reqId: msg.reqId, ok: false, error: '진행 중인 방이 없다' }));
         const pid = entry.room.pidOfUser(user.id);
-        const r = entry.room.handle(pid, msg.action ?? {});
-        ws.send(JSON.stringify({ t: 'ack', reqId: msg.reqId, ok: r.ok, error: r.error }));
+        const r = entry.worker ? await entry.worker.action(rid,pid,msg.action ?? {}) : entry.room.handle(pid, msg.action ?? {});
+        if(ws.readyState===1) ws.send(JSON.stringify({ t: 'ack', reqId: msg.reqId, ok: r.ok, error: r.error }));
       }
       if (msg.t === 'dev') {
         if (!devTools) return;
         const entry = rooms.get(userRoom.get(user.id));
-        if (!entry) return;
+        if (!entry || entry.worker) return;
         if (msg.op === 'skip') entry.room.devSkip();
         if (msg.op === 'speed') entry.room.devSetSpeed(msg.scale);
         return;
@@ -1003,8 +1234,10 @@ export function createServer(opts = {}) {
         }
         const rid = userRoom.get(user.id);
         if (rid && rooms.has(rid)) {
-          const { room } = rooms.get(rid);
-          room.setConnected(room.pidOfUser(user.id), false);
+          const { room, worker } = rooms.get(rid);
+          const pid=room.pidOfUser(user.id);
+          room.setConnected(pid,false);
+          worker?.write({kind:'connected',id:rid,pid,connected:false});
         }
       }
     });
@@ -1018,11 +1251,15 @@ export function createServer(opts = {}) {
     reports,
     voice,
     config,
-    listen(port) {
-      return new Promise((r) => server.listen(port, () => r(server.address().port)));
+    listen(port, host = opts.dataDir === null ? '127.0.0.1' : undefined) {
+      return new Promise((r) => server.listen(port, host, () => r(server.address().port)));
     },
     close() {
+      shuttingDown=true;
+      for(const timer of restartTimers.values()) clearTimeout(timer);
       clearInterval(loop);
+      clearTimeout(queueUpdate);
+      for(const worker of workers.values()) worker.stop();
       wss.close();
       server.close();
     },
