@@ -357,8 +357,8 @@ function renderLeaveNote() {
   const l = st.me?.leave;
   let el = $('#leave-note');
   const text = l?.blockedUntil > Date.now()
-    ? `⛔ 게임 중 무단 이탈이 반복돼서 ${new Date(l.blockedUntil).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}까지 게임 입장이 제한돼. (최근 30일 ${l.count}회)`
-    : l?.count ? `⚠️ 최근 30일 무단 이탈 ${l.count}회. 다시 이탈하면 입장이 제한될 수 있어.` : '';
+    ? `⛔ 게임 중 무단 이탈이 반복돼서 ${new Date(l.blockedUntil).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}까지 무료 입장이 제한돼. (최근 30일 ${l.count}회 · 월정액·유료 입장권이 있으면 입장할 수 있어)`
+    : l?.count ? `⚠️ 최근 30일 무단 이탈 ${l.count}회. 함께한 사람들을 위해 끝까지 함께해 줘.` : '';
   if (!text) return el?.remove();
   if (!el) {
     el = document.createElement('p');
@@ -1118,8 +1118,10 @@ function onMessage(m) {
     // 게임 중 오래 나가 있었던 경우 (결과 화면에서 받는다)
     if (st.me) st.me.leave = { count: m.count, blockedUntil: m.blockedUntil };
     const msg = m.blockedUntil
-      ? `⛔ 게임 중 3분 넘게 나가 있어서 무단 이탈로 기록됐어 (최근 30일 ${m.count}회). ${new Date(m.blockedUntil).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}까지 게임 입장이 제한돼.`
-      : '⚠️ 게임 중 3분 넘게 나가 있어서 무단 이탈로 기록됐어. 30일 안에 다시 이탈하면 24시간 입장이 제한돼.';
+      ? `⛔ 게임 중 3분 넘게 나가 있어서 무단 이탈로 기록됐어 (최근 30일 ${m.count}회). ${new Date(m.blockedUntil).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}까지 무료 입장이 제한돼.`
+      : m.paid
+        ? `⚠️ 게임 중 3분 넘게 나가 있어서 무단 이탈로 기록됐어 (최근 30일 ${m.count}회). 함께한 사람들을 위해 끝까지 함께해 줘.`
+        : '⚠️ 게임 중 3분 넘게 나가 있어서 무단 이탈로 기록됐어. 30일 안에 다시 이탈하면 24시간 무료 입장이 제한돼.';
     toastAny(msg);
     renderLeaveNote();
   } else if (m.t === 'social') {

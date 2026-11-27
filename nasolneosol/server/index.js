@@ -522,9 +522,15 @@ export function createServer(opts = {}) {
   // ── 무단 이탈 ──
   const LP = config.leavePenalty;
   /** 최근 windowDays 안의 이탈 기록과 입장 제한 */
+  /** 돈을 내고 이용 중인 회원 (월정액 기간 중이거나 유료 입장권이 남아 있음): 입장 제한을 하지 않는다 */
+  function isPaidUser(u, now = Date.now()) {
+    if (!u || u.isBot) return false;
+    const s = entryStatus(u, now);
+    return s.subActive || s.tickets > 0;
+  }
   function leaveState(u, now = Date.now()) {
     const recent = (u?.leaves ?? []).filter((x) => now - x.at < LP.windowDays * 24 * 3600 * 1000);
-    const until = u?.leaveBlockUntil > now ? u.leaveBlockUntil : null;
+    const until = u?.leaveBlockUntil > now && !isPaidUser(u, now) ? u.leaveBlockUntil : null;
     return { count: recent.length, blockedUntil: until };
   }
   function recordLeave(userId, roomId) {
@@ -533,17 +539,19 @@ export function createServer(opts = {}) {
     const now = Date.now();
     u.leaves = [...(u.leaves ?? []).filter((x) => now - x.at < LP.windowDays * 24 * 3600 * 1000), { at: now, roomId }].slice(-20);
     const n = u.leaves.length;
-    const hours = LP.blockHours[Math.min(n, LP.blockHours.length) - 1] ?? 0;
+    // 유료 이용자(월정액·유료 입장권)는 산 이용권을 막을 수 없어 기록·경고만 한다
+    const paid = isPaidUser(u, now);
+    const hours = paid ? 0 : LP.blockHours[Math.min(n, LP.blockHours.length) - 1] ?? 0;
     if (hours > 0) u.leaveBlockUntil = Math.max(u.leaveBlockUntil ?? 0, now + hours * 3600 * 1000);
     store.persist();
-    console.log(`[leave] ${userId.slice(0, 8)} 무단 이탈 ${n}회 (최근 ${LP.windowDays}일)${hours ? ` → ${hours}시간 입장 제한` : ' → 경고'}`);
-    send(userId, { t: 'leavePenalty', count: n, blockedUntil: hours > 0 ? u.leaveBlockUntil : null });
+    console.log(`[leave] ${userId.slice(0, 8)} 무단 이탈 ${n}회 (최근 ${LP.windowDays}일)${hours ? ` → ${hours}시간 입장 제한` : paid ? ' → 유료 이용자라 기록만' : ' → 경고'}`);
+    send(userId, { t: 'leavePenalty', count: n, blockedUntil: hours > 0 ? u.leaveBlockUntil : null, paid });
   }
   const untilText = (at) => new Date(at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   /** 입장 제한 중이면 안내 문구 */
   function leaveBlockMsg(u, who = '') {
     const s = leaveState(u);
-    return s.blockedUntil ? `${who}게임 중 무단 이탈이 반복돼서 ${untilText(s.blockedUntil)}까지 게임 입장이 제한돼.` : null;
+    return s.blockedUntil ? `${who}게임 중 무단 이탈이 반복돼서 ${untilText(s.blockedUntil)}까지 무료 입장이 제한돼. (월정액·유료 입장권이 있으면 입장할 수 있어)` : null;
   }
 
   const banBody = (b) => ({ error: '이용이 정지된 계정이야', banned: { reason: b.reason, until: b.until } });

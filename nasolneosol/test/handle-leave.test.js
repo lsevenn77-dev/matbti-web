@@ -109,6 +109,9 @@ test('WS: 게임 중 나가서 안 돌아오면 이탈 기록 → 30일 안 2회
   for (let i = 0; i < 6; i++) users.push(mk('male'), mk('female'));
   const [leaver, stayer, repeat] = users;
   repeat.leaves = [{ at: Date.now() - 5 * 24 * 3600 * 1000, roomId: 'old' }]; // 지난주에 한 번 이탈한 사람
+  const paid = users[4]; // 월정액 이용자: 이탈해도 기록만 하고 입장은 막지 않는다
+  paid.leaves = [{ at: Date.now() - 5 * 24 * 3600 * 1000, roomId: 'old' }];
+  paid.wallet = { tickets: 0, subUntil: Date.now() + 20 * 24 * 3600 * 1000, freeDay: null, freeUsed: 0, subDay: null, subUsed: 0 };
   const open = (u) => new Promise((res) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     ws.msgs = [];
@@ -126,6 +129,7 @@ test('WS: 게임 중 나가서 안 돌아오면 이탈 기록 → 30일 안 2회
     // 두 사람이 나가고 돌아오지 않는다
     sockets[0].close();
     sockets[2].close();
+    sockets[4].close();
     await wait(500);
     // 남은 사람이 단계를 넘겨 결과까지
     for (let i = 0; i < 40 && !['result', 'contact', 'ended'].includes(room.phase); i++) {
@@ -138,6 +142,13 @@ test('WS: 게임 중 나가서 안 돌아오면 이탈 기록 → 30일 안 2회
     assert.equal(repeat.leaves.length, 2);
     assert.ok(repeat.leaveBlockUntil > Date.now() + 23 * 3600 * 1000);
     assert.equal(stayer.leaves, undefined);
+    assert.equal(paid.leaves.length, 2);
+    assert.equal(paid.leaveBlockUntil, undefined);
+    // 제한 중이던 사람도 유료 입장권을 사면 입장할 수 있다
+    repeat.wallet.tickets = 1;
+    const meTicket = await fetch(`http://127.0.0.1:${port}/api/me`, { headers: { Authorization: `Bearer ${repeat.token}` } }).then((r) => r.json());
+    assert.equal(meTicket.leave.blockedUntil, null);
+    repeat.wallet.tickets = 0;
     assert.ok(sockets[1].msgs.every((m) => m.t !== 'leavePenalty'));
     const me = await fetch(`http://127.0.0.1:${port}/api/me`, { headers: { Authorization: `Bearer ${repeat.token}` } }).then((r) => r.json());
     assert.equal(me.leave.count, 2);
