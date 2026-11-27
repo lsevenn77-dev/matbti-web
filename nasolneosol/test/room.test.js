@@ -56,22 +56,31 @@ test('자기소개 전에는 나이·직업·사는 곳이 전송 데이터에 �
   assert.equal(v.me.private.job, 'JOB_male_0');
 });
 
-test('첫인상 6:1 그룹, 0표 참가자는 숙소 텍스트, 중복 투표는 한 번만 처리', () => {
+test('첫인상: 남녀 전원 투표, 1차는 먼저 뽑힌 성별의 선택(6:1 가능), 2차는 반대 성별의 선택', () => {
   const { room, clock } = setup({}, { voter: 'female' });
   runUntil(room, clock, 'firstVote');
-  const [m0] = males(room);
-  for (const f of females(room)) assert.equal(room.handle(f, { type: 'vote', target: m0 }).ok, true);
-  assert.equal(room.handle(females(room)[0], { type: 'vote', target: males(room)[1] }).ok, false);
-  // 남자는 투표권 없음
-  assert.equal(room.handle(m0, { type: 'vote', target: females(room)[0] }).ok, false);
+  const M = males(room);
+  const F = females(room);
+  for (const f of F) assert.equal(room.handle(f, { type: 'vote', target: M[0] }).ok, true);
+  assert.equal(room.handle(F[0], { type: 'vote', target: M[1] }).ok, false); // 중복 투표는 한 번만
+  // 남자도 투표한다 (2차 데이트용)
+  assert.equal(room.handle(M[0], { type: 'vote', target: F[2] }).ok, true);
+  assert.equal(room.handle(M[1], { type: 'vote', target: F[2] }).ok, true);
+  assert.equal(room.handle(M[2], { type: 'vote', target: M[3] }).ok, false); // 같은 성별은 못 고름
+  assert.equal(room.viewFor(M[5]).vote.canVote, true);
+  assert.equal(room.viewFor(M[5]).vote.total, 12);
   runUntil(room, clock, 'date1');
   assert.equal(room.dates.date1.length, 1);
   assert.equal(room.dates.date1[0].members.length, 7);
-  const lonely = males(room)[3];
+  assert.deepEqual(room.dates.date2.map((g) => g.members), [[F[2], M[0], M[1]]]);
+  const lonely = M[3];
   assert.equal(room.zoneOf(lonely), 'dorm_male');
   assert.deepEqual(room.channelsFor(lonely), ['dorm_male']);
   assert.equal(room.voicePerms()[lonely].publish, false);
   assert.deepEqual(room.voicePerms()[lonely].subscribe, []);
+  runUntil(room, clock, 'date2', 1000, 200_000);
+  assert.equal(room.zoneOf(M[0]), 'date:0');
+  assert.equal(room.zoneOf(M[3]), 'dorm_male');
 });
 
 test('데이트 그룹끼리만 음성이 오가고 다른 그룹은 들을 수 없다', () => {
@@ -148,45 +157,57 @@ test('발표자가 접속하지 않으면 정해진 시간 뒤 넘어간다', ()
   assert.ok(room.intro.skipped.includes(first));
 });
 
-test('전체 흐름 — 3회 원안(제안 A: 데이트권 3장)', () => {
+test('전체 흐름 — 데이트 4회 (1차·2차 첫인상, 3차 보물찾기 데이트권 남녀 각 2장, 4차 사다리)', () => {
   const { room, clock } = setup({}, { voter: 'female' });
+  assert.deepEqual(room.phases.filter((x) => x.startsWith('date')), ['date1', 'date2', 'date3Pick', 'date3', 'date4']);
+  runUntil(room, clock, 'firstVote');
+  const M = males(room);
+  const F = females(room);
+  M.forEach((m, i) => room.handle(m, { type: 'vote', target: F[i] }));
+  F.forEach((f, i) => room.handle(f, { type: 'vote', target: M[(i + 1) % 6] }));
+  runUntil(room, clock, 'date1');
+  assert.equal(room.dates.date1.length, 6); // 여자 선택
+  assert.ok(room.dates.date1.every((g) => g.focus && M.includes(g.focus)));
+  runUntil(room, clock, 'date2', 1000, 200_000);
+  assert.ok(room.dates.date2.every((g) => F.includes(g.focus))); // 남자 선택
   runUntil(room, clock, 'minigame');
-  assert.equal(room.ticketGender, 'male');
-  assert.deepEqual(room.minigame.players, males(room));
-  // 남자들이 보물찾기: 보물이 나타나면 차례로 그 위에 선다
-  for (let k = 0; k < 3; k++) {
-    for (let i = 0; i < 200 && !room.minigame.active; i++) {
+  assert.equal(room.minigame.players.length, 12);
+  assert.deepEqual(room.minigame.total, { male: 2, female: 2 });
+  // 남녀 각자 자기 성별 보물을 찾는다: M0, F0, M1, F1 순서
+  const take = (pid) => {
+    const g = room.participants.get(pid).gender;
+    for (let i = 0; i < 200 && !room.minigame.active[g]; i++) {
       clock.add(200);
       room.tick();
     }
-    const tr = room.minigame.active;
-    assert.ok(tr, `${k + 1}번째 보물이 나타나야 한다`);
-    assert.ok(room.canRoam(males(room)[k]));
-    assert.equal(room.handle(males(room)[k], { type: 'move', x: tr.x + 0.3, z: tr.z }).ok, true);
+    const tr = room.minigame.active[g];
+    assert.ok(tr, `${g} 보물이 나타나야 한다`);
+    assert.ok(room.canRoam(pid));
+    room.handle(pid, { type: 'move', x: tr.x + 0.3, z: tr.z });
     room.tick();
-  }
+  };
+  take(M[0]);
+  take(F[0]);
+  take(M[1]);
+  // 남자 데이트권 2장을 다 찾으면 남자 보물은 더 안 나온다
+  assert.equal(room.minigame.active.male, null);
+  take(F[1]);
   assert.ok(room.minigame.ranking);
-  assert.deepEqual(room.minigame.ranking.slice(0, 3).map((r) => r.pid), males(room).slice(0, 3));
-  assert.ok(room.minigame.ranking.slice(0, 3).every((r) => r.found));
-  runUntil(room, clock, 'date2Pick');
-  assert.deepEqual(room.pick.pickers, males(room).slice(0, 3));
-  // 차례가 아닌 사람은 지목 불가, 이미 지목된 상대 중복 불가
-  assert.equal(room.handle(males(room)[1], { type: 'pick', target: females(room)[0] }).ok, false);
-  assert.equal(room.handle(males(room)[0], { type: 'pick', target: females(room)[0] }).ok, true);
-  assert.equal(room.handle(males(room)[1], { type: 'pick', target: females(room)[0] }).ok, false);
-  room.handle(males(room)[1], { type: 'pick', target: females(room)[1] });
-  room.handle(males(room)[2], { type: 'pick', target: females(room)[2] });
-  runUntil(room, clock, 'date2');
-  assert.equal(room.dates.date2.length, 3);
+  assert.deepEqual(room.minigame.ranking.map((r) => r.pid), [M[0], F[0], M[1], F[1]]);
+  runUntil(room, clock, 'date3Pick');
+  assert.deepEqual(room.pick.pickers, [M[0], F[0], M[1], F[1]]);
+  // 차례가 아닌 사람은 지목 불가
+  assert.equal(room.handle(F[0], { type: 'pick', target: M[2] }).ok, false);
+  assert.equal(room.handle(M[0], { type: 'pick', target: F[1] }).ok, true); // M0 → F1 (F1 은 데이트권이 있지만 지목받음)
+  assert.equal(room.handle(F[0], { type: 'pick', target: M[0] }).ok, false); // 이미 짝이 정해진 사람은 못 고름
+  assert.equal(room.handle(F[0], { type: 'pick', target: M[1] }).ok, true); // F0 → M1 → M1 은 지목받았으니 차례를 건너뛴다
+  assert.deepEqual(room.pick.skipped, [M[1], F[1]]);
+  assert.equal(room.pick.index, 4);
   runUntil(room, clock, 'date3');
-  assert.equal(room.dates.date3.length, 6);
-  // 랜덤 데이트는 이전 2차 상대를 피한다
-  for (const [a, b] of room.dates.date2.map((g) => g.members)) {
-    assert.ok(!room.dates.date3.some((g) => g.members.includes(a) && g.members.includes(b)));
-  }
+  assert.equal(room.dates.date3.length, 2);
+  runUntil(room, clock, 'date4');
+  assert.equal(room.dates.date4.length, 6);
   runUntil(room, clock, 'finalChoice');
-  const M = males(room);
-  const F = females(room);
   room.handle(M[0], { type: 'final', target: F[0] });
   room.handle(F[0], { type: 'final', target: M[0] });
   room.handle(M[1], { type: 'final', target: F[1] });
@@ -200,17 +221,16 @@ test('전체 흐름 — 3회 원안(제안 A: 데이트권 3장)', () => {
   runUntil(room, clock, 'ended');
 });
 
-test('비교안 — 랜덤 데이트 삭제 + 2차 전원 지목 순서', () => {
-  const { room, clock, cfg } = setup(PRESETS.twoDates, { voter: 'male' });
-  assert.ok(!room.phases.includes('date3'));
-  runUntil(room, clock, 'date2Pick', 1000);
-  assert.equal(room.pick.pickers.length, 6);
-  runUntil(room, clock, 'date2', 1000); // 지목 시간 초과 시 남은 상대 중 자동 배정
-  assert.equal(room.dates.date2.length, 6);
-  const all = room.dates.date2.flatMap((g) => g.members);
-  assert.equal(new Set(all).size, 12);
+test('비교안 — 4차 랜덤 데이트 없이 3회', () => {
+  const { room, clock, cfg } = setup(PRESETS.threeDates, { voter: 'male' });
+  assert.ok(!room.phases.includes('date4'));
+  assert.ok(!room.phases.includes('randomAssign'));
+  runUntil(room, clock, 'date3Pick', 1000, 200_000);
+  assert.equal(room.pick.pickers.length, 4); // 아무도 못 찾으면 남녀 각 2명 추첨
+  runUntil(room, clock, 'date3', 1000); // 지목 시간 초과 시 남은 상대 중 자동 배정
+  assert.ok(room.dates.date3.length >= 2 && room.dates.date3.length <= 4);
   runUntil(room, clock, 'ended', 1000);
-  assert.ok(estimateMinutes(cfg) < estimateMinutes(makeConfig()) + 5);
+  assert.ok(estimateMinutes(cfg) < estimateMinutes(makeConfig()));
 });
 
 test('채팅 채널 권한 — 데이트 중 숙소 사람은 데이트 채널에 쓸 수 없다', () => {
@@ -247,8 +267,8 @@ test('연락처 교환(켰을 때) — 양쪽 모두 동의해야만 공개', ()
   assert.ok(!JSON.stringify(room.viewFor(c)).includes('CONTACT'));
 });
 
-test('기본 설정 예상 시간 (투표 1분·데이트 5분·자기소개 1분+질문 1분)', () => {
-  assert.equal(Math.round(estimateMinutes(makeConfig())), 63);
+test('기본 설정 예상 시간 (데이트 4분 × 3 + 사다리 뒤 6분, 자기소개 1분+질문 1분)', () => {
+  assert.equal(Math.round(estimateMinutes(makeConfig())), 62);
 });
 
 test('데이트 중 숙소에서 기다리는 사람은 돌아다닐 수 있고, 데이트 중인 사람은 못 움직인다', () => {
@@ -297,7 +317,7 @@ test('정상 속도 봇은 단계 시간을 사람처럼 쓰고(첫인상 투표
   assert.equal(room.phase, 'ended');
 });
 
-test('3차 사다리타기: 각자 칸을 고르고, 공개 전에는 가로줄이 숨겨지며, 결과는 1:1 짝', () => {
+test('4차 사다리타기: 각자 칸을 고르고, 공개 전에는 가로줄이 숨겨지며, 결과는 1:1 짝', () => {
   const { room, clock } = setup({}, { voter: 'female' });
   runUntil(room, clock, 'randomAssign', 1000, 200_000);
   const M = males(room);
@@ -310,32 +330,39 @@ test('3차 사다리타기: 각자 칸을 고르고, 공개 전에는 가로줄�
   assert.equal(v.ladder.rungs, null);
   assert.equal(v.ladder.top[4], M[0]);
   room.devSkip(); // 공개 전에 넘겨도 배정은 된다
-  assert.equal(room.phase, 'date3');
-  assert.equal(room.dates.date3.length, 6);
-  const all = room.dates.date3.flatMap((g) => g.members);
+  assert.equal(room.phase, 'date4');
+  assert.equal(room.dates.date4.length, 6);
+  const all = room.dates.date4.flatMap((g) => g.members);
   assert.equal(new Set(all).size, 12);
   // 경로 확인: M[0] 은 4번 칸에서 출발해 도착한 칸의 여자와 짝
   const dest = room.ladderPath(4);
-  const g = room.dates.date3.find((x) => x.members.includes(M[0]));
+  const g = room.dates.date4.find((x) => x.members.includes(M[0]));
   assert.equal(g.members[1], room.ladder.bottom[dest]);
 });
 
-test('보물찾기: 순간이동·다른 성별·두 번째 발견은 인정하지 않고, 오래 못 찾으면 옮겨간다', () => {
+test('보물찾기: 남녀 따로, 다른 성별 보물·순간이동·두 번째 발견은 인정하지 않고, 오래 못 찾으면 옮겨간다', () => {
   const { room, clock } = setup({}, { voter: 'female' });
-  runUntil(room, clock, 'minigame');
+  runUntil(room, clock, 'minigame', 500, 200_000);
   const M = males(room);
   const F = females(room);
-  const waitSpawn = () => {
-    for (let i = 0; i < 200 && !room.minigame.active; i++) {
+  const waitSpawn = (g) => {
+    for (let i = 0; i < 200 && !room.minigame.active[g]; i++) {
       clock.add(200);
       room.tick();
     }
-    return room.minigame.active;
+    return room.minigame.active[g];
   };
-  let tr = waitSpawn();
+  let tr = waitSpawn('male');
+  const ftr = waitSpawn('female');
+  assert.ok(tr && ftr);
+  // 남자 보물과 여자 보물은 떨어진 곳에
+  assert.ok(Math.hypot(tr.x - ftr.x, tr.z - ftr.z) >= 4);
   // 마당 가운데(시작 위치)에서 너무 가까운 곳에는 생기지 않는다
   assert.ok(Math.hypot(tr.x, tr.z) >= room.cfg.minigame.minSpawnDist - 0.7);
-  // 다른 성별은 돌아다닐 수는 있어도(숙소) 보물을 얻지 못한다
+  // 보물은 같은 성별에게만 보인다
+  assert.equal(room.viewFor(M[0]).minigame.treasure.id, tr.id);
+  assert.equal(room.viewFor(F[0]).minigame.treasure.id, ftr.id);
+  // 여자가 남자 보물 위에 서도 소용없다
   room.handle(F[0], { type: 'move', x: tr.x, z: tr.z });
   assert.equal(room.minigame.found.length, 0);
   // 순간이동: 멀리 있다가 0.1초 만에 보물 위로 → 인정 안 함
@@ -350,45 +377,54 @@ test('보물찾기: 순간이동·다른 성별·두 번째 발견은 인정하�
   const firstId = tr.id;
   clock.add(41_000);
   room.tick();
-  assert.notEqual(room.minigame.active.id, firstId);
-  tr = room.minigame.active;
+  assert.notEqual(room.minigame.active.male.id, firstId);
+  tr = room.minigame.active.male;
   // 걸어서 도착 → 인정
   room.handle(M[2], { type: 'move', x: tr.x + 2, z: tr.z });
   clock.add(400);
   room.handle(M[2], { type: 'move', x: tr.x + 0.5, z: tr.z });
   assert.equal(room.minigame.found[0].pid, M[2]);
-  assert.equal(room.minigame.active, null);
+  assert.equal(room.minigame.found[0].gender, 'male');
+  assert.equal(room.minigame.active.male, null);
   // 이미 찾은 사람은 다음 보물을 가져가지 못한다
-  tr = waitSpawn();
+  tr = waitSpawn('male');
   clock.add(2000);
   room.handle(M[2], { type: 'move', x: tr.x, z: tr.z });
   assert.equal(room.minigame.found.length, 1);
   const v = room.viewFor(M[2]);
   assert.equal(v.minigame.type, 'treasure');
   assert.equal(v.minigame.myFound, true);
-  assert.equal(v.minigame.total, 3);
-  // 시간이 끝나면 못 찾은 데이트권은 남은 사람 중 추첨 순서로
+  assert.equal(v.minigame.total, 2);
+  // 시간이 끝나면 성별마다 못 찾은 데이트권은 남은 사람 중 추첨 (찾은 사람이 먼저 지목)
   room.devSkip();
-  assert.equal(room.phase, 'date2Pick');
-  assert.equal(room.minigame.ranking[0].pid, M[2]);
-  assert.equal(room.minigame.ranking.length, 6);
-  assert.equal(room.pick.pickers.length, 3);
+  assert.equal(room.phase, 'date3Pick');
+  const rk = room.minigame.ranking;
+  assert.equal(rk[0].pid, M[2]);
+  assert.equal(rk.length, 4);
+  assert.equal(rk.filter((r) => room.participants.get(r.pid).gender === 'male').length, 2);
+  assert.equal(rk.filter((r) => room.participants.get(r.pid).gender === 'female').length, 2);
+  assert.ok(rk.slice(1).every((r) => r.drawn));
   assert.equal(room.pick.pickers[0], M[2]);
 });
 
-test('미니게임 type=reaction 이면 예전 반응 속도 게임', () => {
+test('미니게임 type=reaction 이면 예전 반응 속도 게임 (성별마다 상위 2명 데이트권)', () => {
   const { room, clock } = setup({ minigame: { type: 'reaction' } }, { voter: 'female' });
-  runUntil(room, clock, 'minigame');
+  runUntil(room, clock, 'minigame', 500, 200_000);
+  const all = [...room.participants.keys()];
   for (let r = 0; r < 3; r++) {
     for (let i = 0; i < 200 && room.minigame.rounds[room.minigame.round].goAt > clock.now(); i++) {
       clock.add(100);
       room.tick();
     }
     clock.add(600);
-    males(room).forEach((m, i) => room.handle(m, { type: 'tap', reactionMs: 200 + i * 50 }));
+    all.forEach((pid, i) => room.handle(pid, { type: 'tap', reactionMs: 200 + i * 50 }));
     clock.add(100);
     room.tick();
   }
   assert.ok(room.minigame.ranking);
-  assert.equal(room.minigame.ranking[0].pid, males(room)[0]);
+  assert.equal(room.minigame.ranking[0].pid, all[0]);
+  runUntil(room, clock, 'date3Pick');
+  const M = males(room);
+  const F = females(room);
+  assert.deepEqual([...room.pick.pickers].sort(), [M[0], M[1], F[0], F[1]].sort());
 });

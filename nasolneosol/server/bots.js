@@ -77,10 +77,10 @@ export class BotDriver {
         const span = r.phaseEndsAt != null ? Math.max(0, r.phaseEndsAt - now) : 0;
         for (const b of this.bots()) this.decideAt.set(b.id, now + span * (0.25 + 0.6 * this.rng()));
       }
-      const turn = r.phase === 'date2Pick' && r.pick ? r.pick.index : null;
+      const turn = r.phase === 'date3Pick' && r.pick ? r.pick.index : null;
       if (turn !== this.seenTurn) {
         this.seenTurn = turn;
-        if (turn != null) for (const b of this.bots()) this.decideAt.set(b.id, now + r.ms(r.cfg.date2.pickTimeoutSec * (0.3 + 0.4 * this.rng())));
+        if (turn != null) for (const b of this.bots()) this.decideAt.set(b.id, now + r.ms(r.cfg.pick.pickTimeoutSec * (0.3 + 0.4 * this.rng())));
       }
     }
     const decided = (id) => !this.realistic || now >= (this.decideAt.get(id) ?? 0);
@@ -105,7 +105,7 @@ export class BotDriver {
       if (r.phase === 'minigame' && r.minigame?.type === 'treasure' && r.minigame.players.includes(b.id) && !r.minigame.ranking) {
         const m = r.minigame;
         if (m.found.some((f) => f.pid === b.id)) continue;
-        const tr = m.active;
+        const tr = m.active[b.gender]; // 내 성별 보물만
         if (!tr) continue;
         const key = `${b.id}:${tr.id}`;
         if (!this.noticeAt) this.noticeAt = new Map();
@@ -133,9 +133,9 @@ export class BotDriver {
       }
       if (!this.ready(b.id)) continue;
 
-      if (r.phase === 'firstVote' && b.gender === r.voterGender && !(b.id in r.votes) && decided(b.id)) {
+      if (r.phase === 'firstVote' && !(b.id in r.votes) && decided(b.id)) {
         r.handle(b.id, { type: 'vote', target: this.pickRandom(opp) });
-      } else if (r.phase === 'date2Pick' && r.pick?.pickers[r.pick.index] === b.id && decided(b.id)) {
+      } else if (r.phase === 'date3Pick' && r.pick?.pickers[r.pick.index] === b.id && decided(b.id)) {
         const opts = r.pickOptions(b.id);
         if (opts.length) r.handle(b.id, { type: 'pick', target: this.pickRandom(opts) });
       } else if (r.phase === 'randomAssign' && r.ladder && !r.ladder.revealed && decided(b.id)) {
@@ -146,7 +146,7 @@ export class BotDriver {
         }
       } else if (r.phase === 'finalChoice' && !(b.id in r.finalVotes) && decided(b.id)) {
         // 만났던 상대를 조금 더 고르는 경향 + 30% 기권
-        const met = [...r.partnersOf(b.id, ['date1', 'date2', 'date3'])];
+        const met = [...r.partnersOf(b.id, ['date1', 'date2', 'date3', 'date4'])];
         const target = this.rng() < 0.3 ? null : this.pickRandom(met.length && this.rng() < 0.7 ? met : opp);
         r.handle(b.id, { type: 'final', target });
       } else if (r.phase === 'contact' && r.matchOf(b.id) && !(b.id in r.contact)) {

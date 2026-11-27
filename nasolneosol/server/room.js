@@ -8,7 +8,7 @@
 import { ALIASES, CHARACTERS, TREASURE_SPOTS } from './config.js';
 
 const OTHER = { male: 'female', female: 'male' };
-const DATE_PHASES = new Set(['date1', 'date2', 'date3']);
+const DATE_PHASES = new Set(['date1', 'date2', 'date3', 'date4']);
 // 자유 구경 이동 범위 (client/public/scene.js 의 월드 배치와 맞춘다)
 export const WORLD = { minX: -24, maxX: 24, minZ: -26, maxZ: 10 };
 
@@ -69,9 +69,8 @@ export class Room {
     this.phaseEndsAt = null;
 
     this.voterGender = null;
-    this.ticketGender = null;
     this.votes = {}; // firstVote: voter → target | null(기권)
-    this.dates = { date1: [], date2: [], date3: [] }; // [{ id, members:[pid] }]
+    this.dates = { date1: [], date2: [], date3: [], date4: [] }; // [{ id, members:[pid] }]
     this.intro = null;
     this.minigame = null;
     this.pick = null;
@@ -96,7 +95,7 @@ export class Room {
     if (this.phase === 'waiting' || this.phase === 'ended') return;
     if (this.phase === 'selfIntro') this.tickIntro(t);
     if (this.phase === 'minigame') this.tickMinigame(t);
-    if (this.phase === 'date2Pick') this.tickPick(t);
+    if (this.phase === 'date3Pick') this.tickPick(t);
     if (this.phase === 'randomAssign') this.tickLadder(t);
     if (this.phaseEndsAt != null && t >= this.phaseEndsAt) this.advance();
   }
@@ -149,35 +148,43 @@ export class Room {
   // ───────────────────────── 단계별 진입/종료 ─────────────────────────
 
   enter_intro() {
+    // 첫인상 투표는 남녀 전원이 한다. 1차는 voterGender 의 선택으로, 2차는 반대 성별의 선택으로 데이트한다
     const vg = this.cfg.firstVote.voterGender;
     this.voterGender = vg === 'random' ? (this.rng() < 0.5 ? 'male' : 'female') : vg;
-    // [확정] 2차 데이트권은 첫인상에서 선택하지 않았던 성별이 게임으로 얻는다
-    this.ticketGender = OTHER[this.voterGender];
-    this.log('voterGender', { voterGender: this.voterGender });
+    this.secondGender = OTHER[this.voterGender];
+    this.log('voterGender', { voterGender: this.voterGender, secondGender: this.secondGender });
   }
 
   enter_firstVote() {
     this.votes = {};
   }
 
-  exit_firstVote() {
-    // 미제출은 기권 처리 [임시]
-    for (const p of this.byGender(this.voterGender)) if (!(p.id in this.votes)) this.votes[p.id] = null;
+  /** 한 성별의 첫인상 선택 → 데이트 그룹 (고른 사람 + 같은 사람을 고른 사람들) */
+  groupsFromVotes(gender, prefix) {
     const groups = new Map();
-    for (const [voter, target] of Object.entries(this.votes)) {
+    for (const p of this.byGender(gender)) {
+      const target = this.votes[p.id];
       if (!target) continue;
       if (!groups.has(target)) groups.set(target, []);
-      groups.get(target).push(voter);
+      groups.get(target).push(p.id);
     }
     const cap = this.cfg.firstVote.groupCap;
     const list = [];
     for (const [target, voters] of groups) {
       // 상한이 있으면 먼저 투표한 순서대로 자른다 [임시]
       const kept = cap ? voters.slice(0, cap) : voters;
-      list.push({ id: `d1-${list.length}`, members: [target, ...kept], focus: target });
+      list.push({ id: `${prefix}-${list.length}`, members: [target, ...kept], focus: target });
     }
-    this.dates.date1 = list;
-    this.log('date1Groups', { groups: list.map((g) => g.members) });
+    return list;
+  }
+
+  exit_firstVote() {
+    // 미제출은 기권 처리 [임시]
+    for (const p of this.participants.values()) if (!(p.id in this.votes)) this.votes[p.id] = null;
+    this.dates.date1 = this.groupsFromVotes(this.voterGender, 'd1');
+    this.dates.date2 = this.groupsFromVotes(this.secondGender, 'd2');
+    this.log('date1Groups', { gender: this.voterGender, groups: this.dates.date1.map((g) => g.members) });
+    this.log('date2Groups', { gender: this.secondGender, groups: this.dates.date2.map((g) => g.members) });
   }
 
   enter_date1() {}
@@ -280,11 +287,13 @@ export class Room {
 
   enter_minigame(t) {
     const mg = this.cfg.minigame;
-    const players = this.byGender(this.ticketGender).map((p) => p.id);
+    // 남녀 전원이 참여한다. 데이트권은 성별마다 따로 (남자 보물·여자 보물)
+    const players = [...this.participants.keys()];
     if (mg.type === 'treasure') {
-      // 데이트권 수만큼 보물을 숨긴다. 전원 지목 방식이면 전원이 찾을 때까지
-      const total = this.cfg.date2.mode === 'tickets' ? Math.min(this.cfg.date2.ticketCount, players.length) : players.length;
-      this.minigame = { type: 'treasure', players, total, found: [], active: null, seq: 0, lastSpot: -1, nextSpawnAt: t + this.ms(mg.firstSpawnSec), ranking: null };
+      const per = this.cfg.pick.ticketsPerGender;
+      const total = { male: Math.min(per, this.byGender('male').length), female: Math.min(per, this.byGender('female').length) };
+      const at = t + this.ms(mg.firstSpawnSec);
+      this.minigame = { type: 'treasure', players, total, found: [], active: { male: null, female: null }, seq: 0, lastSpot: -1, nextSpawnAt: { male: at, female: at }, ranking: null };
       this.markDirty();
       return;
     }
@@ -298,50 +307,71 @@ export class Room {
     return this.participants.get(pid)?.pos ?? { x: 0, z: 0 };
   }
 
-  spawnTreasure(t) {
+  /** gender 성별이 찾을 보물을 하나 놓는다 (다른 성별 보물과 다른 곳, 사람들에게서 떨어진 곳) */
+  spawnTreasure(gender, t) {
     const m = this.minigame;
     const mg = this.cfg.minigame;
     const hunters = m.players.map((pid) => this.hunterPos(pid));
-    const far = (x, z) => hunters.every((h) => Math.hypot(h.x - x, h.z - z) >= mg.minSpawnDist);
-    let idxs = TREASURE_SPOTS.map((_, i) => i).filter((i) => i !== m.lastSpot && far(...TREASURE_SPOTS[i]));
-    if (!idxs.length) idxs = TREASURE_SPOTS.map((_, i) => i).filter((i) => i !== m.lastSpot);
+    const other = m.active[OTHER[gender]];
+    const far = (x, z) => hunters.every((h) => Math.hypot(h.x - x, h.z - z) >= mg.minSpawnDist) && (!other || Math.hypot(other.x - x, other.z - z) >= 6);
+    const prev = m.active[gender]?.spot ?? -1;
+    let idxs = TREASURE_SPOTS.map((_, i) => i).filter((i) => i !== prev && far(...TREASURE_SPOTS[i]));
+    if (!idxs.length) idxs = TREASURE_SPOTS.map((_, i) => i).filter((i) => i !== prev);
     const i = idxs[Math.floor(this.rng() * idxs.length)];
     const [sx, sz] = TREASURE_SPOTS[i];
-    m.lastSpot = i;
-    m.active = { id: `t${++m.seq}`, x: Math.round((sx + (this.rng() - 0.5) * 1.2) * 100) / 100, z: Math.round((sz + (this.rng() - 0.5) * 1.2) * 100) / 100, since: t };
-    this.log('treasureSpawn', { id: m.active.id, x: m.active.x, z: m.active.z });
+    m.active[gender] = { id: `t${++m.seq}`, gender, spot: i, x: Math.round((sx + (this.rng() - 0.5) * 1.2) * 100) / 100, z: Math.round((sz + (this.rng() - 0.5) * 1.2) * 100) / 100, since: t };
+    const a = m.active[gender];
+    this.log('treasureSpawn', { id: a.id, gender, x: a.x, z: a.z });
     this.markDirty();
+  }
+
+  foundCount(gender) {
+    return this.minigame.found.filter((f) => f.gender === gender).length;
   }
 
   /** 이동할 때마다 보물 위에 섰는지 본다 */
   checkTreasure(p, prev, t) {
     const m = this.minigame;
     const mg = this.cfg.minigame;
-    if (!m || m.type !== 'treasure' || m.ranking || !m.active) return;
-    if (!m.players.includes(p.id) || m.found.some((f) => f.pid === p.id)) return;
+    if (!m || m.type !== 'treasure' || m.ranking) return;
+    const tr = m.active[p.gender];
+    if (!tr || !m.players.includes(p.id) || m.found.some((f) => f.pid === p.id)) return;
     // 순간이동 막기: 직전 위치에서 너무 빨리 왔으면 인정하지 않는다
     if (prev) {
       const dt = Math.max(0.05, ((t - prev.at) / 1000) * this.timeScale);
       if (Math.hypot(p.pos.x - prev.x, p.pos.z - prev.z) > mg.maxSpeed * dt + 1) return;
     }
-    if (Math.hypot(p.pos.x - m.active.x, p.pos.z - m.active.z) > mg.touchRadius) return;
-    m.found.push({ pid: p.id, at: t, sec: Math.round((t - this.phaseStartedAt) / 100) / 10, treasure: m.active.id });
-    this.log('treasureFound', { pid: p.id, id: m.active.id });
-    m.active = null;
+    if (Math.hypot(p.pos.x - tr.x, p.pos.z - tr.z) > mg.touchRadius) return;
+    m.found.push({ pid: p.id, gender: p.gender, at: t, sec: Math.round((t - this.phaseStartedAt) / 100) / 10, treasure: tr.id });
+    this.log('treasureFound', { pid: p.id, id: tr.id });
+    m.active[p.gender] = null;
     const [a, b] = mg.nextSpawnSec;
-    m.nextSpawnAt = t + this.ms(a + this.rng() * (b - a));
+    m.nextSpawnAt[p.gender] = t + this.ms(a + this.rng() * (b - a));
     this.markDirty();
+  }
+
+  /** 이 성별의 보물찾기가 끝났는지: 데이트권을 다 찾았거나 찾을 사람이 남지 않음 */
+  treasureDone(gender) {
+    const m = this.minigame;
+    const left = this.byGender(gender).filter((p) => !m.found.some((f) => f.pid === p.id));
+    return this.foundCount(gender) >= m.total[gender] || !left.length;
   }
 
   tickTreasure(t) {
     const m = this.minigame;
     const mg = this.cfg.minigame;
-    const left = m.players.filter((pid) => !m.found.some((f) => f.pid === pid));
-    if (m.found.length >= m.total || !left.length) return this.finishMinigame();
-    if (!m.active && t >= m.nextSpawnAt) this.spawnTreasure(t);
-    else if (m.active && t - m.active.since >= this.ms(mg.relocateSec)) {
-      this.log('treasureMoved', { id: m.active.id });
-      this.spawnTreasure(t); // 오래 못 찾으면 다른 곳으로
+    if (this.treasureDone('male') && this.treasureDone('female')) return this.finishMinigame();
+    for (const g of ['male', 'female']) {
+      if (this.treasureDone(g)) {
+        m.active[g] = null;
+        continue;
+      }
+      const a = m.active[g];
+      if (!a && t >= m.nextSpawnAt[g]) this.spawnTreasure(g, t);
+      else if (a && t - a.since >= this.ms(mg.relocateSec)) {
+        this.log('treasureMoved', { id: a.id });
+        this.spawnTreasure(g, t); // 오래 못 찾으면 다른 곳으로
+      }
     }
   }
 
@@ -374,13 +404,17 @@ export class Room {
   finishMinigame() {
     const m = this.minigame;
     if (m.type === 'treasure') {
-      // 찾은 순서대로, 못 찾은 사람은 무작위 순서로 뒤에 (남은 데이트권은 이 순서로 추첨)
-      const rest = m.players.filter((pid) => !m.found.some((f) => f.pid === pid)).map((pid) => ({ pid, r: this.rng() })).sort((a, b) => a.r - b.r);
-      m.active = null;
-      m.ranking = [
-        ...m.found.map((f, i) => ({ pid: f.pid, rank: i + 1, found: true, sec: f.sec })),
-        ...rest.map((x, i) => ({ pid: x.pid, rank: m.found.length + i + 1, found: false })),
-      ];
+      // 데이트권: 찾은 사람(찾은 순서) + 성별마다 못 찾은 표는 남은 사람 중 추첨. 지목 순서는 찾은 사람 먼저, 추첨된 사람은 뒤에
+      m.active = { male: null, female: null };
+      const drawn = [];
+      for (const g of ['male', 'female']) {
+        const need = m.total[g] - this.foundCount(g);
+        const pool = this.byGender(g).map((p) => p.id).filter((pid) => !m.found.some((f) => f.pid === pid)).map((pid) => ({ pid, r: this.rng() })).sort((a, b) => a.r - b.r);
+        for (const x of pool.slice(0, Math.max(0, need))) drawn.push({ pid: x.pid, gender: g, r: this.rng() });
+      }
+      drawn.sort((a, b) => a.r - b.r);
+      const holders = [...m.found.map((f) => ({ pid: f.pid, gender: f.gender, found: true, sec: f.sec })), ...drawn.map((d) => ({ pid: d.pid, gender: d.gender, found: false, drawn: true }))];
+      m.ranking = holders.map((h, i) => ({ ...h, rank: i + 1 }));
       this.log('minigameResult', { type: 'treasure', ranking: m.ranking });
       this.phaseEndsAt = Math.min(this.phaseEndsAt, this.now() + this.ms(6));
       this.markDirty();
@@ -403,32 +437,49 @@ export class Room {
     if (!this.minigame.ranking) this.finishMinigame();
   }
 
-  enter_date2Pick(t) {
-    const c = this.cfg.date2;
-    const ranking = this.minigame.ranking.map((r) => r.pid);
-    const pickers = c.mode === 'tickets' ? ranking.slice(0, c.ticketCount) : ranking;
-    this.log('tickets', { mode: c.mode, pickers });
-    this.pick = { pickers, index: 0, picks: {}, turnEndsAt: t + this.ms(c.pickTimeoutSec) };
+  enter_date3Pick(t) {
+    const c = this.cfg.pick;
+    let pickers = this.minigame.ranking.map((r) => r.pid);
+    if (this.minigame.type !== 'treasure') {
+      // 반응 속도 게임: 성별마다 상위 N명만 데이트권
+      const cnt = { male: 0, female: 0 };
+      pickers = pickers.filter((pid) => cnt[this.participants.get(pid).gender]++ < c.ticketsPerGender);
+    }
+    this.log('tickets', { pickers });
+    this.pick = { pickers, index: 0, picks: {}, skipped: [], turnEndsAt: t + this.ms(c.pickTimeoutSec) };
+    this.skipPairedPickers();
+  }
+
+  /** 이미 짝이 정해진 사람 (누군가 지목했거나 내가 지목함) */
+  pairedIds() {
+    const s = new Set();
+    for (const [a, b] of Object.entries(this.pick.picks)) if (b) { s.add(a); s.add(b); }
+    return s;
   }
 
   pickOptions(pickerId) {
-    const taken = new Set(Object.values(this.pick.picks).filter(Boolean));
+    const taken = this.pairedIds();
     const me = this.participants.get(pickerId);
-    let opts = this.byGender(OTHER[me.gender]).map((p) => p.id).filter((id) => !taken.has(id));
-    if (this.cfg.date2.excludeDate1Partners) {
-      const prev = this.partnersOf(pickerId, ['date1']);
-      const filtered = opts.filter((id) => !prev.has(id));
-      if (filtered.length) opts = filtered;
+    return this.byGender(OTHER[me.gender]).map((p) => p.id).filter((id) => !taken.has(id));
+  }
+
+  /** 차례가 왔는데 이미 다른 사람에게 지목돼 짝이 있으면 지목 없이 넘어간다 */
+  skipPairedPickers() {
+    const pk = this.pick;
+    while (pk.index < pk.pickers.length && (this.pairedIds().has(pk.pickers[pk.index]) || !this.pickOptions(pk.pickers[pk.index]).length)) {
+      pk.skipped.push(pk.pickers[pk.index]);
+      this.log('pickSkipped', { picker: pk.pickers[pk.index] });
+      pk.index += 1;
     }
-    return opts;
+    pk.turnEndsAt = this.now() + this.ms(this.cfg.pick.pickTimeoutSec);
+    if (pk.index >= pk.pickers.length) this.phaseEndsAt = Math.min(this.phaseEndsAt ?? Infinity, this.now() + this.ms(3));
   }
 
   commitPick(pickerId, target, auto = false) {
     this.pick.picks[pickerId] = target;
     this.log('pick', { picker: pickerId, target, auto });
     this.pick.index += 1;
-    this.pick.turnEndsAt = this.now() + this.ms(this.cfg.date2.pickTimeoutSec);
-    if (this.pick.index >= this.pick.pickers.length) this.phaseEndsAt = this.now() + this.ms(3);
+    this.skipPairedPickers();
     this.markDirty();
   }
 
@@ -437,8 +488,8 @@ export class Room {
     if (!pk || pk.index >= pk.pickers.length) return;
     const cur = pk.pickers[pk.index];
     const absent = !this.participants.get(cur).connected;
-    if (t >= pk.turnEndsAt || (absent && t >= pk.turnEndsAt - this.ms(this.cfg.date2.pickTimeoutSec - 5))) {
-      if (this.cfg.date2.onPickTimeout === 'random') {
+    if (t >= pk.turnEndsAt || (absent && t >= pk.turnEndsAt - this.ms(this.cfg.pick.pickTimeoutSec - 5))) {
+      if (this.cfg.pick.onPickTimeout === 'random') {
         const opts = this.pickOptions(cur);
         this.commitPick(cur, opts.length ? opts[Math.floor(this.rng() * opts.length)] : null, true);
       } else {
@@ -447,16 +498,16 @@ export class Room {
     }
   }
 
-  exit_date2Pick() {
+  exit_date3Pick() {
     while (this.pick.index < this.pick.pickers.length) {
       const cur = this.pick.pickers[this.pick.index];
       const opts = this.pickOptions(cur);
       this.commitPick(cur, opts.length ? opts[Math.floor(this.rng() * opts.length)] : null, true);
     }
-    this.dates.date2 = Object.entries(this.pick.picks)
+    this.dates.date3 = Object.entries(this.pick.picks)
       .filter(([, t]) => t)
-      .map(([a, b], i) => ({ id: `d2-${i}`, members: [a, b] }));
-    this.log('date2Groups', { groups: this.dates.date2.map((g) => g.members) });
+      .map(([a, b], i) => ({ id: `d3-${i}`, members: [a, b] }));
+    this.log('date3Groups', { groups: this.dates.date3.map((g) => g.members) });
   }
 
   enter_randomAssign(t) {
@@ -464,7 +515,7 @@ export class Room {
     this.autoRandomAssign();
   }
 
-  // ── 3차 데이트 사다리타기 ──
+  // ── 4차 데이트 사다리타기 ──
   // 남자는 위쪽 출발점, 여자는 아래쪽 도착점을 각자 고른다. 가로줄은 서버가 미리 숨겨 두고 공개 때 보여준다.
   startLadder(t) {
     const males = this.byGender('male').map((p) => p.id);
@@ -480,7 +531,7 @@ export class Room {
       }
     }
     this.ladder = { cols, rows, rungs, top: {}, bottom: {}, revealed: false, revealAt: this.phaseEndsAt - this.ms(this.cfg.randomDate.ladderRevealSec) };
-    this.dates.date3 = [];
+    this.dates.date4 = [];
   }
 
   /** 사다리 따라 내려가기: 위 칸 → 아래 칸 */
@@ -528,12 +579,12 @@ export class Room {
       const f = L.bottom[this.ladderPath(c)];
       if (m && f) pairs.push([m, f]);
     }
-    this.dates.date3 = pairs.map((m, i) => ({ id: `d3-${i}`, members: m }));
+    this.dates.date4 = pairs.map((m, i) => ({ id: `d4-${i}`, members: m }));
     L.revealed = true;
     L.revealedAt = t;
     // 결과 애니메이션을 볼 시간은 남긴다
     this.phaseEndsAt = Math.max(this.phaseEndsAt, t + this.ms(this.cfg.randomDate.ladderRevealSec));
-    this.log('date3Groups', { groups: pairs, mode: 'ladder' });
+    this.log('date4Groups', { groups: pairs, mode: 'ladder' });
     this.markDirty();
   }
 
@@ -548,7 +599,7 @@ export class Room {
   autoRandomAssign() {
     const males = this.byGender('male').map((p) => p.id);
     const females = this.byGender('female').map((p) => p.id);
-    const prev = (a, b) => this.partnersOf(a, ['date1', 'date2']).has(b);
+    const prev = (a, b) => this.partnersOf(a, ['date1', 'date2', 'date3']).has(b);
     let best = null;
     // 무작위 배정 여러 번 중 이전 상대와 겹침이 가장 적은 안 선택 [임시]
     const tries = this.cfg.randomDate.avoidPreviousPartners ? 300 : 1;
@@ -559,8 +610,8 @@ export class Room {
       if (!best || repeats < best.repeats) best = { pairs, repeats };
       if (repeats === 0) break;
     }
-    this.dates.date3 = best.pairs.map((m, i) => ({ id: `d3-${i}`, members: m }));
-    this.log('date3Groups', { groups: best.pairs, repeats: best.repeats });
+    this.dates.date4 = best.pairs.map((m, i) => ({ id: `d4-${i}`, members: m }));
+    this.log('date4Groups', { groups: best.pairs, repeats: best.repeats });
   }
 
   enter_finalChoice() {
@@ -600,7 +651,6 @@ export class Room {
 
   act_vote(p, { target }) {
     if (this.phase !== 'firstVote') return fail('투표 시간이 아니다');
-    if (p.gender !== this.voterGender) return fail('이번 회차 투표권이 없다');
     if (p.id in this.votes) return fail('이미 투표했다'); // 중복 요청은 한 번만 처리
     if (target == null) {
       if (!this.cfg.firstVote.allowAbstain) return fail('기권 불가');
@@ -610,7 +660,7 @@ export class Room {
     }
     this.votes[p.id] = target ?? null;
     this.log('vote', { voter: p.id, target: target ?? null });
-    if (this.byGender(this.voterGender).every((v) => v.id in this.votes)) {
+    if ([...this.participants.keys()].every((id) => id in this.votes)) {
       this.phaseEndsAt = Math.min(this.phaseEndsAt, this.now() + this.ms(3));
     }
     return { ok: true };
@@ -644,7 +694,7 @@ export class Room {
   }
 
   act_pick(p, { target }) {
-    if (this.phase !== 'date2Pick') return fail('지목 시간이 아니다');
+    if (this.phase !== 'date3Pick') return fail('지목 시간이 아니다');
     const pk = this.pick;
     if (pk.pickers[pk.index] !== p.id) return fail('내 차례가 아니다');
     if (!this.pickOptions(p.id).includes(target)) return fail('지목할 수 없는 상대');
@@ -838,8 +888,8 @@ export class Room {
       phases: this.phases,
       phaseStartedAt: this.phaseStartedAt,
       phaseEndsAt: this.phaseEndsAt,
-      voterGender: this.voterGender,
-      ticketGender: this.ticketGender,
+      voterGender: this.voterGender, // 1차 데이트 = 이 성별의 첫인상 선택
+      secondGender: this.secondGender, // 2차 데이트 = 이 성별의 첫인상 선택
       me: { ...this.publicProfile(pid), private: { age: me.profile.age, job: me.profile.job, region: me.profile.region } },
       participants: [...this.participants.keys()].map((id) => this.publicProfile(id)),
       zones: Object.fromEntries([...this.participants.keys()].map((id) => [id, this.zoneOf(id)])),
@@ -849,9 +899,8 @@ export class Room {
       voice: this.voicePerms()[pid],
       speakingIds: Object.entries(this.voicePerms()).filter(([, v2]) => v2.publish).map(([k]) => k),
       settings: {
-        dateRounds: this.cfg.randomDate.enabled ? 3 : 2,
-        date2Mode: this.cfg.date2.mode,
-        ticketCount: this.cfg.date2.ticketCount,
+        dateRounds: this.cfg.randomDate.enabled ? 4 : 3,
+        ticketsPerGender: this.cfg.pick.ticketsPerGender,
         profileReveal: this.cfg.profileReveal,
         allowAbstain: this.cfg.firstVote.allowAbstain,
         contactExchange: this.cfg.contactExchange.enabled,
@@ -860,10 +909,10 @@ export class Room {
 
     if (this.phase === 'firstVote') {
       v.vote = {
-        canVote: me.gender === this.voterGender,
+        canVote: true,
         myVote: pid in this.votes ? this.votes[pid] : undefined,
         submitted: Object.keys(this.votes).length,
-        total: this.byGender(this.voterGender).length,
+        total: this.participants.size,
       };
     }
     const g = this.myDateGroup(pid);
@@ -893,9 +942,11 @@ export class Room {
       v.minigame = {
         type: 'treasure',
         playing: m.players.includes(pid),
-        total: m.total,
-        treasure: m.active ? { id: m.active.id, x: m.active.x, z: m.active.z } : null,
-        found: m.found.map((f) => ({ pid: f.pid, sec: f.sec })),
+        total: m.total[me.gender], // 내 성별 데이트권 수
+        totals: m.total,
+        // 보물은 같은 성별에게만 보인다 (다른 성별 보물은 밟아도 소용없음)
+        treasure: m.active[me.gender] ? { id: m.active[me.gender].id, x: m.active[me.gender].x, z: m.active[me.gender].z } : null,
+        found: m.found.map((f) => ({ pid: f.pid, gender: f.gender, sec: f.sec })),
         myFound: m.found.some((f) => f.pid === pid),
         ranking: m.ranking,
       };
@@ -913,11 +964,11 @@ export class Room {
         ranking: m.ranking,
       };
     }
-    if (this.phase === 'date2Pick' && this.pick) {
+    if (this.phase === 'date3Pick' && this.pick) {
       const pk = this.pick;
       const cur = pk.pickers[pk.index] ?? null;
       v.pick = {
-        mode: this.cfg.date2.mode,
+        skipped: pk.skipped,
         pickers: pk.pickers,
         currentPicker: cur,
         turnEndsAt: pk.turnEndsAt,
@@ -927,7 +978,7 @@ export class Room {
       };
     }
     if (this.phase === 'randomAssign') {
-      const ug = this.dates.date3.find((x) => x.members.includes(pid));
+      const ug = this.dates.date4.find((x) => x.members.includes(pid));
       v.upcomingDate = ug ? { id: ug.id, members: ug.members } : null;
       const L = this.ladder;
       if (L) {
@@ -1001,8 +1052,8 @@ export class Room {
 }
 
 export function buildPhaseList(cfg) {
-  const list = ['intro', 'firstVote', 'date1', 'freeRoam', 'selfIntro', 'minigame', 'date2Pick', 'date2'];
-  if (cfg.randomDate.enabled) list.push('randomAssign', 'date3');
+  const list = ['intro', 'firstVote', 'date1', 'freeRoam', 'selfIntro', 'date2', 'minigame', 'date3Pick', 'date3'];
+  if (cfg.randomDate.enabled) list.push('randomAssign', 'date4');
   list.push('finalChoice', 'result');
   if (cfg.contactExchange.enabled) list.push('contact');
   list.push('ended');

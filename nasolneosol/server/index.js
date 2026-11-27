@@ -828,7 +828,7 @@ export function createServer(opts = {}) {
           devTools,
           timeScale,
           estimateMinutes: estimateMinutes(config),
-          dateRounds: config.randomDate.enabled ? 3 : 2,
+          dateRounds: config.randomDate.enabled ? 4 : 3,
           slots: config.slots,
           minAge: config.minAge,
           voice: 'mock',

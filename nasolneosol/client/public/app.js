@@ -1,20 +1,21 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=27';
-import { AudioDirector } from './audio.js?v=27';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=28';
+import { AudioDirector } from './audio.js?v=28';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
   waiting: '준비 중',
   intro: '입장 안내',
   firstVote: '첫인상 선택',
-  date1: '1차 데이트 · 첫인상',
+  date1: '1차 데이트',
   freeRoam: '숙소 자유 구경',
   selfIntro: '자기소개',
-  minigame: '데이트권 보물찾기',
-  date2Pick: '데이트 상대 지목',
   date2: '2차 데이트',
-  randomAssign: '랜덤 데이트 배정',
-  date3: '3차 랜덤 데이트',
+  minigame: '데이트권 보물찾기',
+  date3Pick: '3차 데이트 상대 지목',
+  date3: '3차 데이트',
+  randomAssign: '사다리타기',
+  date4: '4차 랜덤 데이트',
   finalChoice: '최종 선택',
   result: '결과 발표',
   contact: '연락처 교환',
@@ -1045,15 +1046,19 @@ function name(id) {
 }
 
 function phaseToast(v) {
-  if (v.phase === 'firstVote') return v.voterGender === v.me.gender ? '첫인상 선택 시간이야. 사진을 보고 한 명을 골라 줘.' : `이번 회차는 ${G[v.voterGender]}가 선택해. 기다려 줘.`;
+  if (v.phase === 'firstVote') return `첫인상 선택 시간이야. 사진을 보고 마음에 드는 이성 한 명을 골라 줘. (${G[v.voterGender]} 선택은 1차, ${G[v.secondGender]} 선택은 2차 데이트)`;
+  if (v.phase === 'date1' || v.phase === 'date2') {
+    const who = v.phase === 'date1' ? v.voterGender : v.secondGender;
+    const base = `${PHASE_NAMES[v.phase]} 시작! 첫인상에서 ${G[who]}가 고른 결과야.`;
+    return v.myDate ? `${base} 같은 그룹끼리만 음성이 연결돼 (모의).` : `${base} 이번엔 숙소에서 기다려.`;
+  }
   if (v.phase === 'freeRoam') return '자유 구경! 조이스틱이나 바닥을 눌러 이동해. 캐릭터를 누르면 프로필, 대화는 텍스트로.';
   if (v.phase === 'minigame' && v.minigame?.type === 'treasure') {
-    return v.minigame.playing
-      ? `🔍 데이트권 보물찾기! 마을 어딘가 희미하게 반짝이는 곳 위에 서면 데이트권을 얻어. (${v.minigame.total}장)`
-      : `${G[v.ticketGender]}들이 데이트권 보물찾기 중이야. 숙소에서 기다려 줘.`;
+    return `🔍 데이트권 보물찾기! 마을 어딘가 희미하게 반짝이는 곳 위에 서면 데이트권을 얻어. (${G[v.me.gender]} ${v.minigame.total}장 · 3차 데이트 상대를 지목할 수 있어)`;
   }
   if (v.myDate) return `${PHASE_NAMES[v.phase]} 시작! 같은 그룹끼리만 음성이 연결돼 (모의).`;
-  if (v.phase.startsWith('date')) return '이번 데이트에는 참여하지 않아. 숙소에서 텍스트로 대화하거나 밖으로 나가 돌아다녀도 돼.';
+  if (v.phase === 'date3Pick') return '3차 데이트 상대 지목! 데이트권을 찾은 순서대로 이성 한 명을 1:1로 지목해.';
+  if (/^date\d$/.test(v.phase)) return '이번 데이트에는 참여하지 않아. 숙소에서 텍스트로 대화하거나 밖으로 나가 돌아다녀도 돼.';
   if (canRoam()) return `${PHASE_NAMES[v.phase]} · 기다리는 동안 자유롭게 돌아다녀도 돼.`;
   return `${PHASE_NAMES[v.phase]}`;
 }
@@ -1062,9 +1067,10 @@ function renderHud() {
   const v = st.view;
   $('#phase-name').textContent = PHASE_NAMES[v.phase] ?? v.phase;
   let sub = '';
-  if (v.phase === 'intro' && v.voterGender) sub = `첫인상 선택: ${G[v.voterGender]} · 2차 데이트권 게임: ${G[v.ticketGender]}`;
+  if (v.phase === 'intro' && v.voterGender) sub = `1차: ${G[v.voterGender]} 선택 · 2차: ${G[v.secondGender]} 선택 · 3차: 보물찾기 · 4차: 사다리`;
   else if (v.myDate) sub = `함께: ${v.myDate.members.filter((x) => x !== v.me.id).map(name).join(', ')}`;
-  else if (v.phase.startsWith('date')) sub = `${CHANNEL_NAMES[`dorm_${v.me.gender}`]}에서 대기 · 텍스트만 · 이동 가능`;
+  else if (/^date\d$/.test(v.phase)) sub = `${CHANNEL_NAMES[`dorm_${v.me.gender}`]}에서 대기 · 텍스트만 · 이동 가능`;
+  else if (v.phase === 'date3Pick' && v.pick?.currentPicker) sub = `${name(v.pick.currentPicker)} 지목 중`;
   else if (v.phase === 'selfIntro' && v.intro) sub = `${Math.min(v.intro.index + 1, v.intro.order.length)} / ${v.intro.order.length}번째`;
   else sub = `나는 ${v.me.alias}`;
   $('#phase-sub').textContent = sub;
@@ -1090,7 +1096,7 @@ function endsAt() {
   const v = st.view;
   if (!v) return null;
   if (v.phase === 'selfIntro' && v.intro) return v.intro.gapUntil ?? v.intro.speakerEndsAt;
-  if (v.phase === 'date2Pick' && v.pick?.currentPicker) return v.pick.turnEndsAt;
+  if (v.phase === 'date3Pick' && v.pick?.currentPicker) return v.pick.turnEndsAt;
   return v.phaseEndsAt;
 }
 
@@ -1341,17 +1347,16 @@ function renderPanel() {
   switch (v.phase) {
     case 'intro':
       h = `<div class="box"><h3>나는 이번 회차 '${esc(v.me.alias)}'</h3>
-        <p>첫인상 선택은 <b>${G[v.voterGender]}</b>가 해. 사진·가명·캐릭터만 보여 (나이·직업·사는 곳은 자기소개 후 공개).</p>
-        <p class="muted">데이트 ${v.settings.dateRounds}회 진행 · 음성은 자기소개와 데이트에서만.</p></div>`;
+        <p>잠시 뒤 <b>모두</b> 첫인상으로 이성 한 명을 골라. <b>${G[v.voterGender]}</b>가 고른 결과로 1차, <b>${G[v.secondGender]}</b>가 고른 결과로 2차 데이트를 해. 사진·가명·캐릭터만 보여 (나이·직업·사는 곳은 자기소개 후 공개).</p>
+        <p class="muted">데이트 ${v.settings.dateRounds}회 · 3차는 보물찾기로 얻은 데이트권, 4차는 사다리타기 · 음성은 자기소개와 데이트에서만.</p></div>`;
       break;
     case 'firstVote': {
       const vt = v.vote;
-      if (!vt.canVote) {
-        h = `<div class="box"><h3>${G[v.voterGender]}가 첫인상 선택 중</h3><p>${vt.submitted}/${vt.total}명 완료. 누가 누구를 골랐는지는 공개하지 않아.</p></div>`;
-      } else if (vt.myVote !== undefined) {
+      if (vt.myVote !== undefined) {
         h = `<div class="box"><h3>선택 완료</h3><p>${vt.myVote ? `${esc(name(vt.myVote))}를 선택했어.` : '기권했어.'} 집계 중… (${vt.submitted}/${vt.total})</p></div>`;
       } else {
-        h = `<div class="box"><h3>첫인상으로 한 명을 골라 줘</h3><div class="grid">${opp.map((p) => pcard(p, { sel: st.selected === p.id })).join('')}</div>
+        const round = v.me.gender === v.voterGender ? '1차' : '2차';
+        h = `<div class="box"><h3>첫인상으로 한 명을 골라 줘</h3><p class="muted small">내 선택은 <b>${round} 데이트</b>가 돼. 누가 누구를 골랐는지는 공개하지 않아.</p><div class="grid">${opp.map((p) => pcard(p, { sel: st.selected === p.id })).join('')}</div>
           <div class="row"><button class="btn primary" id="btn-submit" ${st.selected ? '' : 'disabled'}>선택 확정</button>${v.settings.allowAbstain ? '<button class="btn" id="btn-abstain">기권</button>' : ''}</div></div>`;
       }
       break;
@@ -1359,6 +1364,7 @@ function renderPanel() {
     case 'date1':
     case 'date2':
     case 'date3':
+    case 'date4':
       if (v.myDate) {
         const others = v.myDate.members.filter((x) => x !== v.me.id);
         h = `<div class="box"><h3>${PHASE_NAMES[v.phase]} · ${others.length + 1}명</h3><div class="grid">${others.map((id) => pcard(P(id))).join('')}</div>
@@ -1376,7 +1382,7 @@ function renderPanel() {
     case 'minigame':
       h = `<div class="box" id="mg"></div>`;
       break;
-    case 'date2Pick':
+    case 'date3Pick':
       h = renderPick();
       break;
     case 'randomAssign':
@@ -1489,7 +1495,7 @@ function renderLadder() {
   svg += myPath + slots(L.top, 12, male) + slots(L.bottom, 188, !male);
   const left = Math.max(0, Math.ceil((L.revealAt - serverNow()) / 1000));
   const head = L.revealed
-    ? partner ? `🎉 3차 데이트 상대: <b>${esc(name(partner))}</b>` : '결과 공개!'
+    ? partner ? `🎉 4차 데이트 상대: <b>${esc(name(partner))}</b>` : '결과 공개!'
     : `🪜 ${male ? '위쪽 출발점' : '아래쪽 도착점'}을 골라 줘 · 모두 고르거나 시간이 되면 공개`;
   return `<div class="box ladder"><h3>${head}</h3>
     <svg viewBox="0 0 ${w} 200" class="ladder-svg" role="img" aria-label="사다리타기">${svg}</svg>
@@ -1499,9 +1505,11 @@ function renderLadder() {
 function renderPick() {
   const v = st.view;
   const pk = v.pick;
-  const rank = pk.ranking.map((r) => `<li>${esc(name(r.pid))} <span class="muted">${r.totalMs}ms</span>${pk.pickers.includes(r.pid) ? ' 🎟' : ''}</li>`).join('');
+  const GS = { male: '♂', female: '♀' };
+  const how = (r) => (r.found ? `${r.sec}초에 발견` : r.drawn ? '추첨' : r.totalMs != null ? `${r.totalMs}ms` : '');
+  const rank = pk.ranking.filter((r) => pk.pickers.includes(r.pid)).map((r) => `<li>${esc(name(r.pid))} ${GS[P(r.pid)?.gender] ?? ''} <span class="muted">${how(r)}</span>${pk.skipped?.includes(r.pid) ? ' <span class="muted">· 이미 지목받아 넘어감</span>' : ''}</li>`).join('');
   const picks = Object.entries(pk.picks).map(([a, b]) => `<span class="pill">${esc(name(a))} → ${b ? esc(name(b)) : '없음'}</span>`).join('');
-  let h = `<div class="box"><h3>${pk.mode === 'tickets' ? `데이트권 ${pk.pickers.length}장` : '지목 순서'}</h3><ol class="rank">${rank}</ol><div>${picks}</div>`;
+  let h = `<div class="box"><h3>🎟 데이트권 ${pk.pickers.length}장 · 지목 순서</h3><ol class="rank">${rank}</ol><div>${picks}</div>`;
   if (pk.currentPicker === v.me.id) {
     const opp = v.participants.filter((p) => p.gender !== v.me.gender);
     h += `<h3 style="margin-top:10px">내 차례! 데이트할 상대를 골라 줘</h3><div class="grid">${opp.map((p) => pcard(p, { sel: st.selected === p.id, off: !pk.options.includes(p.id) })).join('')}</div>
@@ -1509,7 +1517,7 @@ function renderPick() {
   } else if (pk.currentPicker) {
     h += `<p>${esc(name(pk.currentPicker))}가 상대를 고르는 중…</p>`;
   } else {
-    h += '<p>지목 완료. 곧 2차 데이트가 시작돼.</p>';
+    h += '<p>지목 완료. 곧 3차 데이트가 시작돼.</p>';
   }
   return h + '</div>';
 }
@@ -1538,10 +1546,12 @@ function syncTreasure(v) {
     seenFound = 0;
     return;
   }
+  const mine = m.found.filter((x) => x.gender === v.me.gender);
   for (const f of m.found.slice(seenFound)) {
-    const left = m.total - m.found.length;
-    if (f.pid === v.me.id) celebrate('🎟 데이트권 발견!', `${m.found.indexOf(f) + 1}번째로 찾았어 · 데이트 상대를 먼저 고를 수 있어`);
-    else toast(`✨ ${name(f.pid)} 데이트권 발견!${left > 0 && m.playing ? ` (남은 ${left}장)` : ''}`);
+    const left = m.total - mine.length;
+    if (f.pid === v.me.id) celebrate('🎟 데이트권 발견!', `${G[v.me.gender]} 중 ${mine.indexOf(f) + 1}번째 · 3차 데이트 상대를 지목할 수 있어`);
+    else if (f.gender === v.me.gender) toast(`✨ ${name(f.pid)} 데이트권 발견!${left > 0 ? ` (${G[v.me.gender]} 남은 ${left}장)` : ''}`);
+    else toast(`✨ ${name(f.pid)}(${G[f.gender]}) 데이트권 발견!`);
   }
   seenFound = m.found.length;
 }
@@ -1572,20 +1582,21 @@ function renderMinigameTick() {
   let key;
   let h;
   if (m.type === 'treasure') {
-    const left = m.total - m.found.length;
-    const chips = m.found.map((f, i) => `<span class="pill">${i + 1}. ${esc(name(f.pid))}${f.pid === v.me.id ? ' (나)' : ''}</span>`).join('');
+    const left = m.total - m.found.filter((x) => x.gender === v.me.gender).length;
+    const GS = { male: '♂', female: '♀' };
+    const chips = m.found.map((f) => `<span class="pill">${esc(name(f.pid))} ${GS[f.gender]}${f.pid === v.me.id ? ' (나)' : ''}</span>`).join('');
     if (m.ranking) {
       key = 'trank';
-      h = `<h3>🎟 보물찾기 결과</h3><ol class="rank">${m.ranking.slice(0, m.total).map((r) => `<li>${esc(name(r.pid))} <span class="muted">${r.found ? `${r.sec}초에 발견` : '추첨'}</span></li>`).join('')}</ol><p class="muted small">이 순서대로 데이트 상대를 지목해.</p>`;
+      h = `<h3>🎟 보물찾기 결과</h3><ol class="rank">${m.ranking.map((r) => `<li>${esc(name(r.pid))} ${GS[r.gender] ?? ''} <span class="muted">${r.found ? `${r.sec}초에 발견` : '추첨'}</span></li>`).join('')}</ol><p class="muted small">이 순서대로 3차 데이트 상대를 지목해.</p>`;
     } else if (!m.playing) {
       key = `twatch-${m.found.length}`;
-      h = `<h3>${G[v.ticketGender]}들이 데이트권 보물찾기 중</h3><p>숙소 채팅으로 대화하면서 기다려 줘. ${chips}</p>`;
+      h = `<h3>데이트권 보물찾기 중</h3><p>숙소 채팅으로 대화하면서 기다려 줘. ${chips}</p>`;
     } else if (m.myFound) {
       key = `tmine-${m.found.length}`;
       h = `<h3>🎟 데이트권 획득!</h3><p class="small">다른 사람들이 찾는 중이야. 남은 데이트권 ${left}장 ${chips}</p>`;
     } else {
       key = `thunt-${m.found.length}-${!!m.treasure}`;
-      h = `<h3>🔍 데이트권 보물찾기 <span class="muted small">남은 ${left}/${m.total}장</span></h3>
+      h = `<h3>🔍 데이트권 보물찾기 <span class="muted small">${G[v.me.gender]} 남은 ${left}/${m.total}장</span></h3>
         <p class="small">마을 어딘가 <b>희미하게 반짝이는 곳</b>을 찾아 그 위에 정확히 서 봐! ${m.treasure ? '' : '<span class="muted">(다음 보물이 곧 나타나…)</span>'}</p>${chips ? `<p class="small">${chips}</p>` : ''}`;
     }
     box.classList.add('mg-compact');
@@ -1600,7 +1611,7 @@ function renderMinigameTick() {
     h = `<h3>미니게임 결과</h3><ol class="rank">${m.ranking.map((r) => `<li>${esc(name(r.pid))} <span class="muted">${r.totalMs}ms</span></li>`).join('')}</ol>`;
   } else if (!m.playing) {
     key = 'watch';
-    h = `<h3>${G[v.ticketGender]}들이 데이트권을 걸고 게임 중</h3><p>숙소 채팅으로 대화하면서 기다려 줘.</p>`;
+    h = `<h3>데이트권을 걸고 게임 중</h3><p>숙소 채팅으로 대화하면서 기다려 줘.</p>`;
   } else {
     const tapped = m.myTap;
     const go = m.goAt != null;
@@ -1630,7 +1641,7 @@ function bindPanel() {
   if (v.phase === 'minigame') renderMinigameTick();
   for (const c of document.querySelectorAll('#panel .pcard')) {
     c.addEventListener('click', () => {
-      const selectable = ['firstVote', 'finalChoice', 'date2Pick'].includes(v.phase) && c.closest('.grid').querySelectorAll('.pcard').length > 1;
+      const selectable = ['firstVote', 'finalChoice', 'date3Pick'].includes(v.phase) && c.closest('.grid').querySelectorAll('.pcard').length > 1;
       if (selectable) {
         st.selected = c.dataset.pid;
         renderPanel();

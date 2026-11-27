@@ -1291,7 +1291,7 @@ export class GameScene {
       const f = myZone === 'stage' || view.phase === 'selfIntro' ? { x: 0, z: 1.2 } : ZONES[myZone] ?? ZONES.lounge;
       this.camTarget.set(f.x, 0, f.z);
     }
-    this.closeUp = view.phase.startsWith('date') && !!view.myDate;
+    this.closeUp = /^date\d$/.test(view.phase) && !!view.myDate;
   }
 
   // ── 보물찾기: 땅 위에 희미하게 반짝이는 빛 ──
@@ -1806,8 +1806,8 @@ export class GameScene {
 
 // ───────── 시간대 (게임 단계 → 하루 중 시각, 연출 전용) ─────────
 const PHASE_TOD = {
-  waiting: 0.3, intro: 0.22, firstVote: 0.28, date1: 0.36, freeRoam: 0.45, selfIntro: 0.55, minigame: 0.64,
-  date2Pick: 0.68, date2: 0.74, randomAssign: 0.8, date3: 0.85, finalChoice: 0.9, result: 0.93, contact: 0.95, ended: 0.97,
+  waiting: 0.3, intro: 0.22, firstVote: 0.28, date1: 0.34, freeRoam: 0.42, selfIntro: 0.52, date2: 0.6, minigame: 0.66,
+  date3Pick: 0.7, date3: 0.75, randomAssign: 0.8, date4: 0.85, finalChoice: 0.9, result: 0.93, contact: 0.95, ended: 0.97,
 };
 export function timeOfPhase(phase) {
   return PHASE_TOD[phase] ?? 0.4;

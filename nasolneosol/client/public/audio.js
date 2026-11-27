@@ -23,7 +23,7 @@ export function moodFor(view) {
   const p = view.phase;
   if (!p || p === 'waiting') return 'waiting';
   if (p === 'intro') return 'lobby';
-  if (p === 'firstVote' || p === 'date2Pick') return 'tension';
+  if (p === 'firstVote' || p === 'date3Pick') return 'tension';
   if (p.startsWith('date')) return view.myDate ? 'romance' : 'village';
   if (p === 'freeRoam') return 'village';
   if (p === 'selfIntro') return 'quiet';
