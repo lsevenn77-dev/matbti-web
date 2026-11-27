@@ -1,5 +1,5 @@
 // 12명 실제 WebSocket 클라이언트로 한 회차를 끝까지 진행하는 검증 스크립트.
-// 사용: node scripts/simulate.js [timeScale=60] [preset=threeDates]
+// 사용: node scripts/simulate.js [timeScale=60] [preset=fourDates]
 // 측정: 1인당 서버→클라이언트 게임 상태 바이트 (음성·사진·정적 파일 제외)
 
 import { WebSocket } from 'ws';
@@ -13,7 +13,7 @@ import { createServer } from '../server/index.js';
 import { estimateMinutes } from '../server/config.js';
 
 const timeScale = Number(process.argv[2] || 60);
-const preset = process.argv[3] || 'threeDates';
+const preset = process.argv[3] || 'fourDates';
 const targetRooms = Number(process.argv[4] || 1);
 assert([1, 2, 10, 20, 25, 50, 100, 200, 400].includes(targetRooms));
 const latency = [];
@@ -146,10 +146,11 @@ class Client {
     }
     if (v.phase === 'firstVote' && v.vote.canVote && key('vote')) setTimeout(() => this.act({ type: 'vote', target: rnd(opp) }), 50);
     if (v.phase === 'selfIntro' && v.intro?.speakerId === v.me.id && key(`intro`)) setTimeout(() => this.act({ type: 'introDone' }), 100);
-    if (v.phase === 'minigame' && v.minigame?.playing && v.minigame.goAt && !v.minigame.myTap && key(`tap${v.minigame.round}`)) {
+    // 데이트권: 보물찾기는 아래 treasureWalk 가 걸어가서 찾는다. 예전 반응 속도 게임(type=reaction)도 지원
+    if (v.phase === 'minigame' && v.minigame?.type === 'reaction' && v.minigame.playing && v.minigame.goAt && !v.minigame.myTap && key(`tap${v.minigame.round}`)) {
       setTimeout(() => this.act({ type: 'tap', reactionMs: 200 + Math.round(Math.random() * 400) }), 30);
     }
-    if (v.phase === 'date2Pick' && v.pick?.currentPicker === v.me.id && key(`pick`)) setTimeout(() => this.act({ type: 'pick', target: rnd(v.pick.options) }), 50);
+    if (v.phase === 'date3Pick' && v.pick?.currentPicker === v.me.id && key(`pick`)) setTimeout(() => this.act({ type: 'pick', target: rnd(v.pick.options) }), 50);
     if (v.phase === 'finalChoice' && v.final.myChoice === undefined && key('final')) {
       const met = [v.myDate?.members].flat().filter(Boolean);
       void met;
@@ -195,6 +196,20 @@ if(activity==='walking') {
     for(const c of clients) c.send({t:'ping',c:Date.now()});
   },15000));
 }
+// 데이트권 보물찾기: 내 성별 보물이 보이면 걸어서 다가간다 (서버의 순간이동 검사: 초당 maxSpeed m × 배속)
+activityTimers.push(setInterval(()=>{
+  for(const c of clients) {
+    const v=c.view;
+    const m=v?.minigame;
+    if(c.ws.readyState!==WebSocket.OPEN || v?.phase!=='minigame' || m?.type!=='treasure' || !m.treasure || m.myFound) { if(v?.phase!=='minigame') c.pos=null; continue; }
+    c.pos ??= v.positions?.[v.me.id] ?? {x:0,z:0};
+    const dx=m.treasure.x-c.pos.x, dz=m.treasure.z-c.pos.z, d=Math.hypot(dx,dz);
+    const step=Math.min(d, 0.8*Math.max(1,timeScale));
+    if(d<0.05) continue;
+    c.pos={x:c.pos.x+dx/d*step,z:c.pos.z+dz/d*step};
+    c.act({type:'move',x:Math.round(c.pos.x*100)/100,z:Math.round(c.pos.z*100)/100});
+  }
+},100));
 activityTimers.push(setInterval(()=>{
   heap.push({s:Math.round((Date.now()-t0)/1000),rss:process.memoryUsage().rss,heap:process.memoryUsage().heapUsed});
 },60000));
@@ -231,9 +246,11 @@ const ev = (t) => room.events.filter((e) => e.type === t);
 console.log(`\n== 시뮬레이션 결과 (${preset}, 배속 ×${timeScale}) ==`);
 console.log('단계 순서:', clients[0].phases.join(' → '));
 if(topology==='legacy') {
-console.log('첫인상 투표 성별:', room.voterGender, '/ 데이트권 게임 성별:', room.ticketGender);
+console.log('1차 선택 성별:', room.voterGender, '/ 2차 선택 성별:', room.secondGender);
 console.log('1차 데이트 그룹 크기:', room.dates.date1.map((g) => `${g.members.length - 1}:1`).join(', '));
-console.log('2차 데이트:', room.dates.date2.length, '쌍', '/ 3차:', room.dates.date3.length, '쌍');
+console.log('2차 데이트 그룹 크기:', room.dates.date2.map((g) => `${g.members.length - 1}:1`).join(', '));
+console.log('3차(데이트권):', room.dates.date3.length, '쌍', '/ 4차(사다리):', room.dates.date4.length, '쌍');
+console.log('보물 발견:', ev('treasureFound').length, '장');
 console.log('자기소개 완료:', room.intro.done.length, '명, 건너뜀:', room.intro.skipped.length);
 }
 console.log('최종 매치:', room.matches.length, '쌍');
@@ -248,7 +265,8 @@ console.log(`  → 설정 기준 ${estimateMinutes(app.config)}분 회차로 나
 clearInterval(pulse);
 const incomplete = [...app.rooms.values()].filter(({room:r}) => {
   const count = type => r.events.filter(e => e.type === type).length;
-  return count('vote') !== 6 || count('final') !== 12;
+  // 첫인상은 남녀 12명 전원이 투표한다
+  return count('vote') !== 12 || count('final') !== 12;
 }).length;
 assert.equal(app.rooms.size, targetRooms);
 assert(clients.every(c => c.view?.phase === 'ended' && !c.leaks.length));

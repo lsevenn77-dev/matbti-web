@@ -110,7 +110,7 @@ try {
     [
       fileURLToPath(new URL('./simulate.js', import.meta.url)),
       '60',
-      'threeDates',
+      'fourDates',
       '10',
       'both',
       'walking',

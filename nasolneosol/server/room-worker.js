@@ -51,6 +51,12 @@ const timer = setInterval(() => {
       const permissions = room.voicePerms();
       for (const p of room.participants.values()) state(room, p, permissions);
     }
+    // 최종 선택이 끝나면 무단 이탈한 회원을 코디네이터에 알린다 (기록·입장 제한은 코디네이터가)
+    if (!room.leaveChecked && ['result', 'contact', 'ended'].includes(room.phase)) {
+      room.leaveChecked = true;
+      const users = room.leavers().map((pid) => room.participants.get(pid).userId);
+      if (users.length) emit({ kind: 'leavers', id: room.id, users });
+    }
     if (room.phase === 'ended') {
       voice.close(room.id);
       emit({

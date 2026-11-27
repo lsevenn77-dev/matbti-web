@@ -37,6 +37,10 @@ export const DEFAULT_CONFIG = {
   // [임시] 성인 기준. 가입 연령 정책은 미정 (결정 대기 11번)
   minAge: 19,
 
+  // 무단 이탈: 게임 중(최종 선택이 끝나기 전) 한 번에 absentSec 넘게 나가 있으면 이탈 1회.
+  // windowDays 안의 이탈 횟수에 따라 입장 제한 시간(시간). 1회는 경고만, 그다음부터 24시간 → 3일 → 7일
+  leavePenalty: { absentSec: 180, windowDays: 30, blockHours: [0, 24, 72, 168] },
+
   // 각 단계 길이 (초). 기획서 05장 70분 비교안을 기본값으로 사용 — 전부 [임시]
   durations: {
     intro: 60, //               입장 안내 + 1차를 먼저 할 성별 추첨 발표

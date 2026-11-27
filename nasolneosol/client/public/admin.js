@@ -49,6 +49,20 @@ $('#login-form').addEventListener('submit', async (e) => {
 });
 $('#btn-logout').addEventListener('click', () => logout(''));
 $('#btn-refresh').addEventListener('click', () => load());
+// 무단 이탈 기록 지우기 (통신 장애 등)
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-clear-leave]');
+  if (!b || !confirm('이 회원의 무단 이탈 기록과 입장 제한을 지울까?')) return;
+  b.disabled = true;
+  try {
+    await api('/api/admin/clear-leave', { userId: b.dataset.clearLeave });
+    toast('이탈 기록을 지웠어');
+    load();
+  } catch (err) {
+    toast(err.message);
+    b.disabled = false;
+  }
+});
 
 // ── 관리 ──
 function openPanel() {
@@ -162,7 +176,7 @@ function person(c, label) {
     <div>
       <span class="who">${label}</span>
       <div class="line"><b>${G[c.gender] ?? ''} · ${c.age}세</b> · ${esc(c.job)} · ${esc(c.region)} ${flags}${ban}</div>
-      <div class="line muted">가입 ${when(c.createdAt)} · 로그인 ${c.linked.length ? esc(c.linked.join(', ')) : '없음'} · 받은 신고 <b class="${c.reportsAgainst >= 3 ? 'redtxt' : ''}">${c.reportsAgainst}건</b> · <code>${esc(c.id.slice(0, 8))}</code></div>
+      <div class="line muted">가입 ${when(c.createdAt)} · 로그인 ${c.linked.length ? esc(c.linked.join(', ')) : '없음'} · 받은 신고 <b class="${c.reportsAgainst >= 3 ? 'redtxt' : ''}">${c.reportsAgainst}건</b>${c.leave?.count ? ` · 무단 이탈 <b class="${c.leave.count >= 2 ? 'redtxt' : ''}">${c.leave.count}회</b>${c.leave.blockedUntil ? ` (~${when(c.leave.blockedUntil)} 입장 제한)` : ''} <button type="button" class="ghost tiny-btn" data-clear-leave="${esc(c.id)}">이탈 기록 지우기</button>` : ''}${c.handle ? ` · @${esc(c.handle)}` : ''} · <code>${esc(c.id.slice(0, 8))}</code></div>
     </div>
   </div>`;
 }

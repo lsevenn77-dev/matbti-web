@@ -82,7 +82,7 @@ def run(profile):
             assert baseline['errors']==0 and renders and not failures
             strikes=0
             with tempfile.TemporaryFile() as log:
-                proc=subprocess.Popen(['node',str(Path(__file__).with_name('simulate.js')),'80','threeDates','10','both'],stdout=log,stderr=log)
+                proc=subprocess.Popen(['node',str(Path(__file__).with_name('simulate.js')),'80','fourDates','10','both'],stdout=log,stderr=log)
                 while proc.poll() is None:
                     current=window(5)
                     ratios={route:val/baseline['p95'][route] for route,val in current['p95'].items()}

@@ -63,7 +63,7 @@ const members = Array.from({ length: 12 }, (_, i) => ({
   userId: 'fixture-' + i,
   profile: { gender: i % 2 ? 'female' : 'male', age: 25 }
 }));
-const room = new Room({ id: 'fixture', config: makeConfig(PRESETS.threeDates), members, rng: () => 0.3 });
+const room = new Room({ id: 'fixture', config: makeConfig(PRESETS.fourDates), members, rng: () => 0.3 });
 for (const pid of room.participants.keys()) room.setConnected(pid, true);
 const sessions = new Map();
 let checks = 0;

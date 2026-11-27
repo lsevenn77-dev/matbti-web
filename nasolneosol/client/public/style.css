@@ -587,6 +587,27 @@ body[data-screen="screen-start"] .topbar { background: transparent; border: 0; b
 .seg-tabs[hidden] { display: none; }
 .seg-tabs button { flex: 1; border: 0; background: transparent; font: inherit; font-size: 14px; font-weight: 700; color: var(--plum-2); padding: 8px 6px; border-radius: 999px; cursor: pointer; }
 .seg-tabs button.on { background: linear-gradient(180deg, var(--pk-2), var(--pk)); color: #fff; box-shadow: 0 3px 8px rgba(240, 98, 143, .3); }
+.seg-tabs button { white-space: nowrap; font-size: 13px; padding: 8px 4px; }
+.p-handle { font-size: 11px; font-weight: 700; color: var(--plum-2); opacity: .8; }
+.soc-sec { margin: 10px 2px 2px; font-size: 13px; color: var(--plum-2); }
+.soc-sec:first-child { margin-top: 0; }
+.ic.sm { width: 30px; height: 30px; font-size: 13px; }
+/* 아이디 */
+.handle-in { display: flex; align-items: center; gap: 2px; border: 1px solid #f0cfdc; border-radius: 12px; background: #fff; padding: 0 10px; flex: 1; min-width: 0; }
+.handle-in i { font-style: normal; font-weight: 800; color: var(--pk); }
+.handle-in input { border: 0 !important; outline: 0; box-shadow: none !important; background: transparent; padding: 10px 2px !important; margin: 0 !important; flex: 1; min-width: 0; font: inherit; }
+.handle-field small { display: block; margin-top: 4px; color: var(--plum-2); font-weight: 500; }
+.handle-field small.ok, .add-friend .ok { color: #2e9b55; }
+.handle-field small.bad, .add-friend .bad { color: #d64545; }
+.add-friend { display: flex; flex-direction: column; gap: 12px; padding-top: 2px; }
+.af-me { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: #fff7fa; border: 1px solid #f6dbe6; border-radius: 14px; padding: 10px 12px; }
+.af-me > .muted { flex-basis: 100%; }
+.af-handle { font-size: 18px; color: var(--plum); margin-right: auto; }
+.af-row { display: flex; gap: 8px; align-items: center; width: 100%; }
+.af-me p { margin: 0; flex-basis: 100%; }
+.me-handle { font-size: 12px; font-weight: 700; color: var(--plum-2); margin-left: 4px; }
+button.me-handle.need { border: 1px dashed var(--pk); background: #fff; color: var(--pk); border-radius: 999px; padding: 2px 8px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 800; }
+.leave-note { margin: 0 0 8px; padding: 8px 12px; border-radius: 12px; background: #fff1f0; border: 1px solid #f5c6c2; color: #a83a32; font-size: 13px; font-weight: 600; line-height: 1.45; text-align: center; }
 #modal-messages-body .person, .soc-body .person { cursor: default; }
 #soc-body .person:has(.last) { cursor: pointer; }
 

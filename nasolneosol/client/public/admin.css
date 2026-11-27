@@ -67,3 +67,4 @@ code { font-size: 12px; background: #f6edf1; padding: 1px 5px; border-radius: 6p
 #capacity-form input[type=number] { width: 5rem; }
 #capacity-details { display: grid; grid-template-columns: minmax(9rem,auto) 1fr; gap: .35rem 1rem; }
 #capacity-details dd { margin: 0; overflow-wrap: anywhere; }
+.tiny-btn { padding: 1px 8px; font-size: 11px; margin-left: 4px; }
