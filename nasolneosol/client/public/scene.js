@@ -194,10 +194,13 @@ export class GameScene {
     inst.receiveShadow = true;
     const m4 = new THREE.Matrix4();
     const c = new THREE.Color();
+    // 돌끼리 겹치는 곳에서 윗면 높이가 똑같으면 카메라가 움직일 때 두 색이 번갈아 깜빡인다(z-fighting).
+    // 돌마다 높이를 0~1.5cm 씩 다르게 해서 겹친 면이 같은 평면에 놓이지 않게 한다. (배치는 그대로 두려고 난수는 따로)
+    const lift = mulberry(91);
     pts.forEach(([x, z], i) => {
       const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * 6.28);
       const sc = 0.85 + rng() * 0.35;
-      m4.compose(new THREE.Vector3(x, 0.03, z), q, new THREE.Vector3(sc, 1, sc));
+      m4.compose(new THREE.Vector3(x, 0.03 + lift() * 0.015, z), q, new THREE.Vector3(sc, 1, sc));
       inst.setMatrixAt(i, m4);
       inst.setColorAt(i, c.set(shades[Math.floor(rng() * shades.length)]));
     });
@@ -744,11 +747,11 @@ export class GameScene {
     // 바닥 링 (성별 / 나) + 말하는 표시
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.6, 28), new THREE.MeshBasicMaterial({ color: p.gender === 'male' ? '#6f95c9' : '#e0849a', transparent: true, opacity: 0.75, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.06;
+    ring.position.y = 0.1; // 돌판 윗면(최대 8.5cm)보다 위
     root.add(ring);
     const voiceRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 0.82, 28), new THREE.MeshBasicMaterial({ color: '#59c27a', transparent: true, opacity: 0, depthWrite: false }));
     voiceRing.rotation.x = -Math.PI / 2;
-    voiceRing.position.y = 0.07;
+    voiceRing.position.y = 0.105;
     root.add(voiceRing);
     // 이름은 옷(가슴·등)에 명찰로. 머리 위는 채팅 말풍선 자리
     const badges = makeBadges(p.alias, p.gender);

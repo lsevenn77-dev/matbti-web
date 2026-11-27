@@ -1,6 +1,6 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=25';
-import { AudioDirector } from './audio.js?v=25';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=26';
+import { AudioDirector } from './audio.js?v=26';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
