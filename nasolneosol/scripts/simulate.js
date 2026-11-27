@@ -164,6 +164,8 @@ const clients = [];
 for (let i = 0; i < targetRooms * 12; i++) clients.push(new Client(i, i % 2 ? 'female' : 'male'));
 for (const c of clients) await c.signup();
 for (const c of clients) await c.connect();
+const stopLobby = process.argv.includes('--mixed-lobby')
+  ? await (await import('./mixed-lobby.js')).startLobbyTraffic(app,port) : null;
 const t0 = Date.now();
 for (const c of clients) {
   c.joinedAt=performance.now();
@@ -271,7 +273,8 @@ if(topology!=='legacy') for(const id of nodes) {
 const missingChat=clients.filter(c=>c.markers.length!==1 || c.markers[0]!=='LAB-ROOM-'+c.view.roomId).length;
 const matchTimes=clients.map(c=>c.matchedMs).sort((a,b)=>a-b);
 const matchP95=matchTimes[Math.ceil(matchTimes.length*.95)-1];
-console.log(JSON.stringify({topology,activity,storage,writes,heap,nodeMetrics,voiceSummary,missingChat,matchP95, assigned:Object.fromEntries(nodes.map(n=>[n,[...app.rooms.values()].filter(e=>e.serverId===n).length])),targetRooms, clients:clients.length, elapsedReal,
+const mixedLobby=stopLobby ? await stopLobby() : null;
+console.log(JSON.stringify({topology,activity,storage,mixedLobby,writes,heap,nodeMetrics,voiceSummary,missingChat,matchP95, assigned:Object.fromEntries(nodes.map(n=>[n,[...app.rooms.values()].filter(e=>e.serverId===n).length])),targetRooms, clients:clients.length, elapsedReal,
   incompleteRooms:incomplete, successfulActions:latency.length, p95Ms:p95, downloaded:totalBytes, uploaded, tcpRx:wireRx, tcpTx:wireTx}));
 app.close();
 assert.equal(missingChat,0,'lounge marker lost, duplicated or sent across rooms');
