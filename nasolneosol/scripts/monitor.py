@@ -13,12 +13,12 @@ from host_sample import measure, read_host
 def metrics(host, evidence, now):
     """Missing, stale or inconsistent evidence fails closed by suppressing the heartbeat."""
     fields=['at','apiP50Ms','apiP95Ms','apiP99Ms','apiErrorRate','baselineP95Ms','baselineErrorRate',
-            'contractMbps','monthlyBytes','projectedOverageWon','budgetWon','diskAwaitLimitMs','minAvailableBytes']
+            'contractMbps','monthlyBytes','projectedOverageWon','budgetWon','diskAwaitLimitMs','minAvailableBytes','networkLimitMbps','maxDropsPerSecond']
     for field in fields:
         value=evidence[field]
         if type(value) not in (float,int) or not math.isfinite(value) or value<0:
             raise ValueError('Invalid '+field)
-    if not 0<=now-evidence['at']<=10000 or evidence['baselineP95Ms']<=0 or evidence['contractMbps']<=0:
+    if not 0<=now-evidence['at']<=10000 or evidence['baselineP95Ms']<=0 or evidence['contractMbps']<=0 or evidence['networkLimitMbps']<=0:
         raise ValueError('Expired or incomplete baseline')
     if not 0<=evidence['apiP50Ms']<=evidence['apiP95Ms']<=evidence['apiP99Ms']:
         raise ValueError('Invalid response time percentiles')
@@ -26,14 +26,19 @@ def metrics(host, evidence, now):
     disk=list(host['disks'].values())
     await_ms=max((v for row in disk for k,v in row.items() if k.endswith('AwaitMs') and v is not None),default=0)
     detail={k:host[k] for k in ['cores','availableBytes','swapUsedBytes','rxBps','txBps','rxBytes','txBytes','drops']}
-    detail.update({k:evidence[k] for k in fields[1:] if k not in ['baselineErrorRate','diskAwaitLimitMs','minAvailableBytes']})
+    detail.update({k:evidence[k] for k in fields[1:] if k not in ['baselineErrorRate','diskAwaitLimitMs','minAvailableBytes','networkLimitMbps','maxDropsPerSecond']})
     detail.update(diskReadBps=sum(d['readBps'] for d in disk),diskWriteBps=sum(d['writeBps'] for d in disk),diskAwaitMs=await_ms)
     error,baseline=evidence['apiErrorRate'],evidence['baselineErrorRate']
+    # Bandwidth commitments determine billing, while measured link headroom and
+    # background NIC drops determine admission. They have separate thresholds.
+    net_ok = (host['seconds'] > 0 and host['drops'] / host['seconds'] <= evidence['maxDropsPerSecond']
+              and host['errors'] == 0
+              and max(host['rxBps'],host['txBps'])*8 <= evidence['networkLimitMbps']*1e6)
     return {'at':now,'cpuPct':host['cpuPct'],'corePeakPct':max(host['cores']),'memPct':host['memPct'],
             'p95Ratio':evidence['apiP95Ms']/evidence['baselineP95Ms'],
             'errorRatio':error/baseline if baseline else (2 if error else 0),
             'ioOk':bool(disk) and await_ms<=evidence['diskAwaitLimitMs'] and host['availableBytes']>=evidence['minAvailableBytes'],
-            'networkOk':host['drops']==0 and host['errors']==0 and max(host['rxBps'],host['txBps'])*8<=evidence['contractMbps']*1e6,
+            'networkOk':net_ok,
             'budgetOk':evidence['projectedOverageWon']<=evidence['budgetWon'],'details':detail}
 
 if __name__=='__main__':
