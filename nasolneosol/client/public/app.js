@@ -1,6 +1,6 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=26';
-import { AudioDirector } from './audio.js?v=26';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=27';
+import { AudioDirector } from './audio.js?v=27';
 
 const $ = (s) => document.querySelector(s);
 const PHASE_NAMES = {
@@ -10,7 +10,7 @@ const PHASE_NAMES = {
   date1: '1차 데이트 · 첫인상',
   freeRoam: '숙소 자유 구경',
   selfIntro: '자기소개',
-  minigame: '미니게임',
+  minigame: '데이트권 보물찾기',
   date2Pick: '데이트 상대 지목',
   date2: '2차 데이트',
   randomAssign: '랜덤 데이트 배정',
@@ -981,6 +981,8 @@ function onMessage(m) {
 // 배경음악 (게임 화면에서만)
 const audio = new AudioDirector();
 window.__nsnsAudio = audio; // 진단용
+// 개발 모드에서만: 콘솔에서 상태 확인용
+Object.defineProperty(window, '__nsnsDebug', { get: () => (st.info?.devTools ? st : undefined) });
 function renderSoundBtn() {
   const off = audio.muted || audio.volume === 0;
   for (const b of [$('#btn-sound'), $('#btn-sound-lobby')]) {
@@ -1027,6 +1029,7 @@ function onState(v) {
     $('#profile-card').hidden = true;
   }
   st.scene.update(v);
+  syncTreasure(v);
   renderHud();
   renderPanel();
   renderChatTabs();
@@ -1044,6 +1047,11 @@ function name(id) {
 function phaseToast(v) {
   if (v.phase === 'firstVote') return v.voterGender === v.me.gender ? '첫인상 선택 시간이야. 사진을 보고 한 명을 골라 줘.' : `이번 회차는 ${G[v.voterGender]}가 선택해. 기다려 줘.`;
   if (v.phase === 'freeRoam') return '자유 구경! 조이스틱이나 바닥을 눌러 이동해. 캐릭터를 누르면 프로필, 대화는 텍스트로.';
+  if (v.phase === 'minigame' && v.minigame?.type === 'treasure') {
+    return v.minigame.playing
+      ? `🔍 데이트권 보물찾기! 마을 어딘가 희미하게 반짝이는 곳 위에 서면 데이트권을 얻어. (${v.minigame.total}장)`
+      : `${G[v.ticketGender]}들이 데이트권 보물찾기 중이야. 숙소에서 기다려 줘.`;
+  }
   if (v.myDate) return `${PHASE_NAMES[v.phase]} 시작! 같은 그룹끼리만 음성이 연결돼 (모의).`;
   if (v.phase.startsWith('date')) return '이번 데이트에는 참여하지 않아. 숙소에서 텍스트로 대화하거나 밖으로 나가 돌아다녀도 돼.';
   if (canRoam()) return `${PHASE_NAMES[v.phase]} · 기다리는 동안 자유롭게 돌아다녀도 돼.`;
@@ -1520,6 +1528,40 @@ function renderContact() {
     <div class="row"><button class="btn primary" id="btn-contact-yes">동의하고 공유</button><button class="btn" id="btn-contact-no">공유 안 함</button></div>`;
 }
 
+// ── 데이트권 보물찾기 ──
+let seenFound = 0;
+function syncTreasure(v) {
+  const m = v.phase === 'minigame' && v.minigame?.type === 'treasure' ? v.minigame : null;
+  // 보물은 찾는 사람(데이트권 성별)에게만, 결과가 나오면 숨김
+  st.scene.setTreasure(m && m.playing && !m.ranking ? m.treasure : null);
+  if (!m) {
+    seenFound = 0;
+    return;
+  }
+  for (const f of m.found.slice(seenFound)) {
+    const left = m.total - m.found.length;
+    if (f.pid === v.me.id) celebrate('🎟 데이트권 발견!', `${m.found.indexOf(f) + 1}번째로 찾았어 · 데이트 상대를 먼저 고를 수 있어`);
+    else toast(`✨ ${name(f.pid)} 데이트권 발견!${left > 0 && m.playing ? ` (남은 ${left}장)` : ''}`);
+  }
+  seenFound = m.found.length;
+}
+/** 화면 가운데 큰 축하 문구 */
+function celebrate(title, sub) {
+  let el = $('#celebrate');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'celebrate';
+    el.className = 'celebrate';
+    $('#screen-game').appendChild(el);
+  }
+  el.innerHTML = `<b>${esc(title)}</b><span>${esc(sub)}</span>`;
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
 let mgState = '';
 function renderMinigameTick() {
   const v = st.view;
@@ -1529,6 +1571,30 @@ function renderMinigameTick() {
   if (!m) return;
   let key;
   let h;
+  if (m.type === 'treasure') {
+    const left = m.total - m.found.length;
+    const chips = m.found.map((f, i) => `<span class="pill">${i + 1}. ${esc(name(f.pid))}${f.pid === v.me.id ? ' (나)' : ''}</span>`).join('');
+    if (m.ranking) {
+      key = 'trank';
+      h = `<h3>🎟 보물찾기 결과</h3><ol class="rank">${m.ranking.slice(0, m.total).map((r) => `<li>${esc(name(r.pid))} <span class="muted">${r.found ? `${r.sec}초에 발견` : '추첨'}</span></li>`).join('')}</ol><p class="muted small">이 순서대로 데이트 상대를 지목해.</p>`;
+    } else if (!m.playing) {
+      key = `twatch-${m.found.length}`;
+      h = `<h3>${G[v.ticketGender]}들이 데이트권 보물찾기 중</h3><p>숙소 채팅으로 대화하면서 기다려 줘. ${chips}</p>`;
+    } else if (m.myFound) {
+      key = `tmine-${m.found.length}`;
+      h = `<h3>🎟 데이트권 획득!</h3><p class="small">다른 사람들이 찾는 중이야. 남은 데이트권 ${left}장 ${chips}</p>`;
+    } else {
+      key = `thunt-${m.found.length}-${!!m.treasure}`;
+      h = `<h3>🔍 데이트권 보물찾기 <span class="muted small">남은 ${left}/${m.total}장</span></h3>
+        <p class="small">마을 어딘가 <b>희미하게 반짝이는 곳</b>을 찾아 그 위에 정확히 서 봐! ${m.treasure ? '' : '<span class="muted">(다음 보물이 곧 나타나…)</span>'}</p>${chips ? `<p class="small">${chips}</p>` : ''}`;
+    }
+    box.classList.add('mg-compact');
+    if (key === mgState && box.innerHTML) return;
+    mgState = key;
+    box.innerHTML = h;
+    return;
+  }
+  box.classList.remove('mg-compact');
   if (m.ranking) {
     key = 'rank';
     h = `<h3>미니게임 결과</h3><ol class="rank">${m.ranking.map((r) => `<li>${esc(name(r.pid))} <span class="muted">${r.totalMs}ms</span></li>`).join('')}</ol>`;

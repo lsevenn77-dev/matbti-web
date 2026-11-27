@@ -101,8 +101,29 @@ export class BotDriver {
         if (now - start >= this.introLen.get(key)) r.handle(b.id, { type: 'introDone' });
         continue;
       }
-      // 미니게임: 신호를 본 뒤 반응
-      if (r.phase === 'minigame' && r.minigame?.players.includes(b.id) && !r.minigame.ranking) {
+      // 보물찾기: 반짝임을 '알아챈' 뒤 걸어가서 밟는다 (사람보다 너무 잘 찾지 않게 알아채는 데 6~20초, 걷는 속도 2m/s)
+      if (r.phase === 'minigame' && r.minigame?.type === 'treasure' && r.minigame.players.includes(b.id) && !r.minigame.ranking) {
+        const m = r.minigame;
+        if (m.found.some((f) => f.pid === b.id)) continue;
+        const tr = m.active;
+        if (!tr) continue;
+        const key = `${b.id}:${tr.id}`;
+        if (!this.noticeAt) this.noticeAt = new Map();
+        if (!this.noticeAt.has(key)) this.noticeAt.set(key, now + r.ms(6 + this.rng() * 14));
+        if (now < this.noticeAt.get(key)) continue;
+        if (this.next.has(b.id) && now < this.next.get(b.id) && this.next.get(b.id) - now < r.ms(1)) continue;
+        // 0.4초마다 0.8m (걷는 속도 2m/s)
+        const pos = r.hunterPos(b.id);
+        const dx = tr.x - pos.x;
+        const dz = tr.z - pos.z;
+        const d = Math.hypot(dx, dz);
+        const step = Math.min(d, 0.8);
+        r.handle(b.id, { type: 'move', x: pos.x + (d ? (dx / d) * step : 0), z: pos.z + (d ? (dz / d) * step : 0) });
+        this.next.set(b.id, now + r.ms(0.4));
+        continue;
+      }
+      // 미니게임(반응 속도): 신호를 본 뒤 반응
+      if (r.phase === 'minigame' && r.minigame?.type === 'reaction' && r.minigame?.players.includes(b.id) && !r.minigame.ranking) {
         const rd = r.minigame.rounds[r.minigame.round];
         if (rd && now >= rd.goAt && !(b.id in rd.taps)) {
           const react = 220 + this.rng() * 500;

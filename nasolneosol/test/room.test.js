@@ -153,19 +153,21 @@ test('전체 흐름 — 3회 원안(제안 A: 데이트권 3장)', () => {
   runUntil(room, clock, 'minigame');
   assert.equal(room.ticketGender, 'male');
   assert.deepEqual(room.minigame.players, males(room));
-  // 남자들이 반응 게임
-  for (let r = 0; r < 3; r++) {
-    for (let i = 0; i < 200 && room.minigame.rounds[room.minigame.round].goAt > clock.now(); i++) {
-      clock.add(100);
+  // 남자들이 보물찾기: 보물이 나타나면 차례로 그 위에 선다
+  for (let k = 0; k < 3; k++) {
+    for (let i = 0; i < 200 && !room.minigame.active; i++) {
+      clock.add(200);
       room.tick();
     }
-    clock.add(600);
-    males(room).forEach((m, i) => room.handle(m, { type: 'tap', reactionMs: 200 + i * 50 }));
-    clock.add(100);
+    const tr = room.minigame.active;
+    assert.ok(tr, `${k + 1}번째 보물이 나타나야 한다`);
+    assert.ok(room.canRoam(males(room)[k]));
+    assert.equal(room.handle(males(room)[k], { type: 'move', x: tr.x + 0.3, z: tr.z }).ok, true);
     room.tick();
   }
   assert.ok(room.minigame.ranking);
-  assert.equal(room.minigame.ranking[0].pid, males(room)[0]);
+  assert.deepEqual(room.minigame.ranking.slice(0, 3).map((r) => r.pid), males(room).slice(0, 3));
+  assert.ok(room.minigame.ranking.slice(0, 3).every((r) => r.found));
   runUntil(room, clock, 'date2Pick');
   assert.deepEqual(room.pick.pickers, males(room).slice(0, 3));
   // 차례가 아닌 사람은 지목 불가, 이미 지목된 상대 중복 불가
@@ -316,4 +318,77 @@ test('3차 사다리타기: 각자 칸을 고르고, 공개 전에는 가로줄�
   const dest = room.ladderPath(4);
   const g = room.dates.date3.find((x) => x.members.includes(M[0]));
   assert.equal(g.members[1], room.ladder.bottom[dest]);
+});
+
+test('보물찾기: 순간이동·다른 성별·두 번째 발견은 인정하지 않고, 오래 못 찾으면 옮겨간다', () => {
+  const { room, clock } = setup({}, { voter: 'female' });
+  runUntil(room, clock, 'minigame');
+  const M = males(room);
+  const F = females(room);
+  const waitSpawn = () => {
+    for (let i = 0; i < 200 && !room.minigame.active; i++) {
+      clock.add(200);
+      room.tick();
+    }
+    return room.minigame.active;
+  };
+  let tr = waitSpawn();
+  // 마당 가운데(시작 위치)에서 너무 가까운 곳에는 생기지 않는다
+  assert.ok(Math.hypot(tr.x, tr.z) >= room.cfg.minigame.minSpawnDist - 0.7);
+  // 다른 성별은 돌아다닐 수는 있어도(숙소) 보물을 얻지 못한다
+  room.handle(F[0], { type: 'move', x: tr.x, z: tr.z });
+  assert.equal(room.minigame.found.length, 0);
+  // 순간이동: 멀리 있다가 0.1초 만에 보물 위로 → 인정 안 함
+  room.handle(M[0], { type: 'move', x: -20, z: -20 });
+  clock.add(100);
+  room.handle(M[0], { type: 'move', x: tr.x, z: tr.z });
+  assert.equal(room.minigame.found.length, 0);
+  // 반경 밖은 인정 안 함
+  room.handle(M[1], { type: 'move', x: tr.x + 1.2, z: tr.z });
+  assert.equal(room.minigame.found.length, 0);
+  // 40초 동안 아무도 못 찾으면 다른 곳으로
+  const firstId = tr.id;
+  clock.add(41_000);
+  room.tick();
+  assert.notEqual(room.minigame.active.id, firstId);
+  tr = room.minigame.active;
+  // 걸어서 도착 → 인정
+  room.handle(M[2], { type: 'move', x: tr.x + 2, z: tr.z });
+  clock.add(400);
+  room.handle(M[2], { type: 'move', x: tr.x + 0.5, z: tr.z });
+  assert.equal(room.minigame.found[0].pid, M[2]);
+  assert.equal(room.minigame.active, null);
+  // 이미 찾은 사람은 다음 보물을 가져가지 못한다
+  tr = waitSpawn();
+  clock.add(2000);
+  room.handle(M[2], { type: 'move', x: tr.x, z: tr.z });
+  assert.equal(room.minigame.found.length, 1);
+  const v = room.viewFor(M[2]);
+  assert.equal(v.minigame.type, 'treasure');
+  assert.equal(v.minigame.myFound, true);
+  assert.equal(v.minigame.total, 3);
+  // 시간이 끝나면 못 찾은 데이트권은 남은 사람 중 추첨 순서로
+  room.devSkip();
+  assert.equal(room.phase, 'date2Pick');
+  assert.equal(room.minigame.ranking[0].pid, M[2]);
+  assert.equal(room.minigame.ranking.length, 6);
+  assert.equal(room.pick.pickers.length, 3);
+  assert.equal(room.pick.pickers[0], M[2]);
+});
+
+test('미니게임 type=reaction 이면 예전 반응 속도 게임', () => {
+  const { room, clock } = setup({ minigame: { type: 'reaction' } }, { voter: 'female' });
+  runUntil(room, clock, 'minigame');
+  for (let r = 0; r < 3; r++) {
+    for (let i = 0; i < 200 && room.minigame.rounds[room.minigame.round].goAt > clock.now(); i++) {
+      clock.add(100);
+      room.tick();
+    }
+    clock.add(600);
+    males(room).forEach((m, i) => room.handle(m, { type: 'tap', reactionMs: 200 + i * 50 }));
+    clock.add(100);
+    room.tick();
+  }
+  assert.ok(room.minigame.ranking);
+  assert.equal(room.minigame.ranking[0].pid, males(room)[0]);
 });

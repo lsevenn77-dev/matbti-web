@@ -5,7 +5,7 @@
 // - 공개 정보는 viewFor(참가자) 에서 서버가 골라 보낸다. 비공개 필드는 아예 전송하지 않는다.
 // - now / rng 를 주입받아 테스트에서 결정적으로 돌릴 수 있다.
 
-import { ALIASES, CHARACTERS } from './config.js';
+import { ALIASES, CHARACTERS, TREASURE_SPOTS } from './config.js';
 
 const OTHER = { male: 'female', female: 'male' };
 const DATE_PHASES = new Set(['date1', 'date2', 'date3']);
@@ -281,9 +281,68 @@ export class Room {
   enter_minigame(t) {
     const mg = this.cfg.minigame;
     const players = this.byGender(this.ticketGender).map((p) => p.id);
-    this.minigame = { players, round: -1, rounds: [], results: {}, ranking: null };
+    if (mg.type === 'treasure') {
+      // 데이트권 수만큼 보물을 숨긴다. 전원 지목 방식이면 전원이 찾을 때까지
+      const total = this.cfg.date2.mode === 'tickets' ? Math.min(this.cfg.date2.ticketCount, players.length) : players.length;
+      this.minigame = { type: 'treasure', players, total, found: [], active: null, seq: 0, lastSpot: -1, nextSpawnAt: t + this.ms(mg.firstSpawnSec), ranking: null };
+      this.markDirty();
+      return;
+    }
+    this.minigame = { type: 'reaction', players, round: -1, rounds: [], results: {}, ranking: null };
     this.startMinigameRound(t + this.ms(2));
-    void mg;
+  }
+
+  // ── 보물찾기 ──
+  /** 참가자 위치 (아직 안 움직였으면 마당 가운데에서 시작) */
+  hunterPos(pid) {
+    return this.participants.get(pid)?.pos ?? { x: 0, z: 0 };
+  }
+
+  spawnTreasure(t) {
+    const m = this.minigame;
+    const mg = this.cfg.minigame;
+    const hunters = m.players.map((pid) => this.hunterPos(pid));
+    const far = (x, z) => hunters.every((h) => Math.hypot(h.x - x, h.z - z) >= mg.minSpawnDist);
+    let idxs = TREASURE_SPOTS.map((_, i) => i).filter((i) => i !== m.lastSpot && far(...TREASURE_SPOTS[i]));
+    if (!idxs.length) idxs = TREASURE_SPOTS.map((_, i) => i).filter((i) => i !== m.lastSpot);
+    const i = idxs[Math.floor(this.rng() * idxs.length)];
+    const [sx, sz] = TREASURE_SPOTS[i];
+    m.lastSpot = i;
+    m.active = { id: `t${++m.seq}`, x: Math.round((sx + (this.rng() - 0.5) * 1.2) * 100) / 100, z: Math.round((sz + (this.rng() - 0.5) * 1.2) * 100) / 100, since: t };
+    this.log('treasureSpawn', { id: m.active.id, x: m.active.x, z: m.active.z });
+    this.markDirty();
+  }
+
+  /** 이동할 때마다 보물 위에 섰는지 본다 */
+  checkTreasure(p, prev, t) {
+    const m = this.minigame;
+    const mg = this.cfg.minigame;
+    if (!m || m.type !== 'treasure' || m.ranking || !m.active) return;
+    if (!m.players.includes(p.id) || m.found.some((f) => f.pid === p.id)) return;
+    // 순간이동 막기: 직전 위치에서 너무 빨리 왔으면 인정하지 않는다
+    if (prev) {
+      const dt = Math.max(0.05, ((t - prev.at) / 1000) * this.timeScale);
+      if (Math.hypot(p.pos.x - prev.x, p.pos.z - prev.z) > mg.maxSpeed * dt + 1) return;
+    }
+    if (Math.hypot(p.pos.x - m.active.x, p.pos.z - m.active.z) > mg.touchRadius) return;
+    m.found.push({ pid: p.id, at: t, sec: Math.round((t - this.phaseStartedAt) / 100) / 10, treasure: m.active.id });
+    this.log('treasureFound', { pid: p.id, id: m.active.id });
+    m.active = null;
+    const [a, b] = mg.nextSpawnSec;
+    m.nextSpawnAt = t + this.ms(a + this.rng() * (b - a));
+    this.markDirty();
+  }
+
+  tickTreasure(t) {
+    const m = this.minigame;
+    const mg = this.cfg.minigame;
+    const left = m.players.filter((pid) => !m.found.some((f) => f.pid === pid));
+    if (m.found.length >= m.total || !left.length) return this.finishMinigame();
+    if (!m.active && t >= m.nextSpawnAt) this.spawnTreasure(t);
+    else if (m.active && t - m.active.since >= this.ms(mg.relocateSec)) {
+      this.log('treasureMoved', { id: m.active.id });
+      this.spawnTreasure(t); // 오래 못 찾으면 다른 곳으로
+    }
   }
 
   startMinigameRound(t) {
@@ -299,6 +358,7 @@ export class Room {
   tickMinigame(t) {
     const m = this.minigame;
     if (!m || m.ranking) return;
+    if (m.type === 'treasure') return this.tickTreasure(t);
     const r = m.rounds[m.round];
     if (r && !r.goSent && t >= r.goAt) {
       r.goSent = true;
@@ -313,6 +373,19 @@ export class Room {
 
   finishMinigame() {
     const m = this.minigame;
+    if (m.type === 'treasure') {
+      // 찾은 순서대로, 못 찾은 사람은 무작위 순서로 뒤에 (남은 데이트권은 이 순서로 추첨)
+      const rest = m.players.filter((pid) => !m.found.some((f) => f.pid === pid)).map((pid) => ({ pid, r: this.rng() })).sort((a, b) => a.r - b.r);
+      m.active = null;
+      m.ranking = [
+        ...m.found.map((f, i) => ({ pid: f.pid, rank: i + 1, found: true, sec: f.sec })),
+        ...rest.map((x, i) => ({ pid: x.pid, rank: m.found.length + i + 1, found: false })),
+      ];
+      this.log('minigameResult', { type: 'treasure', ranking: m.ranking });
+      this.phaseEndsAt = Math.min(this.phaseEndsAt, this.now() + this.ms(6));
+      this.markDirty();
+      return;
+    }
     const pen = this.cfg.minigame.missPenaltyMs;
     const scores = m.players.map((pid) => {
       const total = m.rounds.reduce((s, r) => s + (r.taps[pid]?.ms ?? pen), 0);
@@ -553,6 +626,7 @@ export class Room {
   act_tap(p, { reactionMs }) {
     if (this.phase !== 'minigame') return fail('미니게임 중이 아니다');
     const m = this.minigame;
+    if (m.type !== 'reaction') return fail('지금 미니게임은 누르는 게임이 아니다');
     if (!m.players.includes(p.id)) return fail('참가 대상이 아니다');
     const r = m.rounds[m.round];
     if (!r || m.ranking) return fail('라운드 없음');
@@ -608,9 +682,11 @@ export class Room {
     if (!Number.isFinite(x) || !Number.isFinite(z)) return fail('잘못된 좌표');
     const t = this.now();
     if (p.lastMoveAt && t - p.lastMoveAt < 80) return { ok: true, silent: true }; // 초당 약 12회 제한
+    const prev = p.pos ? { ...p.pos, at: p.lastMoveAt } : null;
     p.lastMoveAt = t;
     p.pos = { x: clamp(x, WORLD.minX, WORLD.maxX), z: clamp(z, WORLD.minZ, WORLD.maxZ) };
     for (const fn of this.listeners) fn({ type: 'pos', id: p.id, ...p.pos });
+    if (this.phase === 'minigame') this.checkTreasure(p, prev, t);
     return { ok: true, silent: true };
   }
 
@@ -734,6 +810,8 @@ export class Room {
   /** 자유롭게 걸어다닐 수 있는지: 자유 구경 시간 + 숙소에서 대기 중일 때 (데이트·미니게임에 안 뽑힌 사람) */
   canRoam(pid) {
     const z = this.zoneOf(pid);
+    // 보물찾기 참가자는 마을을 돌아다닌다 (결과가 나온 뒤엔 멈춤)
+    if (this.phase === 'minigame' && this.minigame?.type === 'treasure' && this.minigame.players.includes(pid) && !this.minigame.ranking) return true;
     return z === 'free' || (z.startsWith('dorm_') && this.phase !== 'ended');
   }
 
@@ -810,7 +888,18 @@ export class Room {
         // 발표자 정보 카드는 공개 정책과 같은 기준을 쓴다 (publicProfile)
       };
     }
-    if (this.phase === 'minigame' && this.minigame) {
+    if (this.phase === 'minigame' && this.minigame?.type === 'treasure') {
+      const m = this.minigame;
+      v.minigame = {
+        type: 'treasure',
+        playing: m.players.includes(pid),
+        total: m.total,
+        treasure: m.active ? { id: m.active.id, x: m.active.x, z: m.active.z } : null,
+        found: m.found.map((f) => ({ pid: f.pid, sec: f.sec })),
+        myFound: m.found.some((f) => f.pid === pid),
+        ranking: m.ranking,
+      };
+    } else if (this.phase === 'minigame' && this.minigame) {
       const m = this.minigame;
       const r = m.rounds[m.round];
       v.minigame = {

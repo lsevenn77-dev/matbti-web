@@ -668,3 +668,21 @@ body[data-screen="screen-start"] .topbar { background: transparent; border: 0; b
 .danger-link[hidden] { display: none; }
 .rp-block input { width: auto !important; display: inline-block !important; margin: 2px 0 0 !important; padding: 0 !important; flex: none; accent-color: var(--pk); }
 .start-msg.ban-msg { white-space: pre-line; color: #b3263f; background: #fff0f3; border: 1px solid #f6c3cd; border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+
+/* ── 데이트권 보물찾기 ── */
+.panel .box.mg-compact { padding: 8px 12px; }
+.panel .box.mg-compact h3 { margin: 0 0 2px; font-size: 14px; }
+.panel .box.mg-compact p { margin: 2px 0; }
+.celebrate { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(.6); opacity: 0; pointer-events: none; z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 26px; border-radius: 24px; text-align: center;
+  background: linear-gradient(180deg, #fff8e1, #ffe7a8); border: 3px solid #fff; box-shadow: 0 12px 40px rgba(160, 110, 20, .35); color: #5a3a00; }
+.celebrate b { font-size: 30px; letter-spacing: -.5px; }
+.celebrate span { font-size: 14px; }
+.celebrate.show { animation: celebrate 3.2s ease-out forwards; }
+@keyframes celebrate {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.6); }
+  10% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  18% { transform: translate(-50%, -50%) scale(1); }
+  85% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -60%) scale(.96); }
+}

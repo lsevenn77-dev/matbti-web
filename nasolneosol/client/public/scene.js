@@ -1294,6 +1294,67 @@ export class GameScene {
     this.closeUp = view.phase.startsWith('date') && !!view.myDate;
   }
 
+  // ── 보물찾기: 땅 위에 희미하게 반짝이는 빛 ──
+  /** tr = { id, x, z } 또는 null(숨김) */
+  setTreasure(tr) {
+    if (!this.treasure) {
+      const g = new THREE.Group();
+      const glowTex = radialTexture('rgba(255,250,215,1)', 'rgba(255,214,120,0.35)');
+      const starTex = starTexture();
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 }));
+      glow.scale.set(1.1, 1.1, 1);
+      glow.position.y = 0.22;
+      g.add(glow);
+      // 바닥에 깔리는 옅은 원 (가까이 가야 겨우 보이는 정도)
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.55, 24), new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 }));
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.y = 0.11;
+      g.add(disc);
+      const stars = [];
+      for (let i = 0; i < 6; i++) {
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 }));
+        s.userData = { a: (i / 6) * Math.PI * 2, r: 0.18 + (i % 3) * 0.12, sp: 0.6 + (i % 4) * 0.25, ph: i * 1.7 };
+        g.add(s);
+        stars.push(s);
+      }
+      g.visible = false;
+      this.scene.add(g);
+      this.treasure = { g, glow, disc, stars, id: null, appear: 0 };
+    }
+    const T = this.treasure;
+    if (!tr) {
+      T.id = null;
+      return;
+    }
+    if (T.id !== tr.id) {
+      T.id = tr.id;
+      T.appear = 0;
+      T.g.position.set(tr.x, 0, tr.z);
+    }
+  }
+
+  animateTreasure(t, dt) {
+    const T = this.treasure;
+    if (!T) return;
+    const on = T.id != null;
+    T.appear += ((on ? 1 : 0) - T.appear) * Math.min(1, dt * (on ? 1.2 : 6));
+    T.g.visible = T.appear > 0.02;
+    if (!T.g.visible) return;
+    // 희미하게: 대부분 은은하다가 가끔 반짝
+    const pulse = 0.55 + 0.45 * Math.sin(t * 2.2);
+    const twinkle = Math.max(0, Math.sin(t * 0.9) * Math.sin(t * 3.7)) ** 6;
+    T.glow.material.opacity = T.appear * (0.16 + 0.16 * pulse + 0.5 * twinkle);
+    T.glow.scale.setScalar(0.9 + 0.25 * pulse + 0.5 * twinkle);
+    T.disc.material.opacity = T.appear * (0.12 + 0.1 * pulse);
+    for (const s of T.stars) {
+      const u = s.userData;
+      const k = (t * u.sp + u.ph) % 1.6;
+      s.position.set(Math.cos(u.a + t * 0.6) * u.r, 0.15 + k * 0.45, Math.sin(u.a + t * 0.6) * u.r);
+      s.scale.setScalar(0.12 + 0.08 * Math.sin(t * 5 + u.ph));
+      s.material.opacity = T.appear * Math.max(0, Math.sin((k / 1.6) * Math.PI)) * (0.35 + 0.5 * twinkle);
+    }
+  }
+
   /** 채팅 말풍선: 보낸 사람 머리 위에 몇 초간 */
   showBubble(pid, text) {
     const c = this.chars.get(pid);
@@ -1653,6 +1714,7 @@ export class GameScene {
         }
       }
     }
+    this.animateTreasure(t, dt);
     // 시간대 (아침→밤) 부드럽게 전환
     this.tod ??= this.todTarget ?? 0.4;
     this.tod += ((this.todTarget ?? 0.4) - this.tod) * Math.min(1, dt * 0.8);
@@ -1894,4 +1956,39 @@ function labelSprite(text) {
   sp.scale.set((h * tex.image.width) / tex.image.height, h, 1);
   sp.renderOrder = 10;
   return sp;
+}
+
+/** 가운데가 밝고 바깥으로 사라지는 원 (보물 빛) */
+function radialTexture(inner, mid) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, inner);
+  gr.addColorStop(0.35, mid);
+  gr.addColorStop(1, 'rgba(255,214,120,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** 작은 십자 반짝이 */
+function starTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gr.addColorStop(0, 'rgba(255,255,240,1)');
+  gr.addColorStop(0.25, 'rgba(255,240,180,0.6)');
+  gr.addColorStop(1, 'rgba(255,240,180,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 32, 32);
+  g.fillStyle = 'rgba(255,255,240,0.9)';
+  g.fillRect(15, 2, 2, 28);
+  g.fillRect(2, 15, 28, 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
