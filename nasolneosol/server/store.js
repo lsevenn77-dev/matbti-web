@@ -18,6 +18,7 @@ export class FileStore {
     this.photos = new Map(); // photoId → { buf, mime }
     this.identities = new Map(); // 'google:sub' → userId (간편 로그인 연결)
     this.orders = new Map(); // orderId → 주문
+    this.handles = new Map(); // 아이디(소문자) → userId
     if (dir) {
       fs.mkdirSync(path.join(dir, 'photos'), { recursive: true });
       fs.mkdirSync(path.join(dir, 'games'), { recursive: true });
@@ -32,6 +33,7 @@ export class FileStore {
         this.users.set(u.id, u);
         this.tokens.set(u.token, u.id);
         for (const k of u.identities ?? []) this.identities.set(k, u.id);
+        if (u.handle) this.handles.set(u.handle, u.id);
       }
     }
     const o = path.join(this.dir, 'orders.json');
@@ -96,6 +98,34 @@ export class FileStore {
     return this.users.get(id) ?? null;
   }
 
+  /** 아이디로 회원 찾기 (대소문자 구분 없음) */
+  byHandle(handle) {
+    const id = this.handles.get(String(handle ?? '').trim().toLowerCase().replace(/^@/, ''));
+    return id ? this.users.get(id) ?? null : null;
+  }
+
+  /** 이 아이디를 쓸 수 있는지. 쓸 수 있으면 정리된 아이디, 아니면 오류 */
+  checkHandle(handle, userId = null) {
+    const h = validateHandle(handle);
+    const owner = this.handles.get(h);
+    if (owner && owner !== userId) throw new Error('이미 누가 쓰고 있는 아이디야');
+    return h;
+  }
+
+  /** 아이디 정하기·바꾸기 (중복 불가) */
+  setHandle(userId, handle) {
+    const u = this.users.get(userId);
+    if (!u) throw new Error('회원을 찾을 수 없어');
+    const h = this.checkHandle(handle, userId);
+    if (u.handle === h) return u;
+    if (u.handle) this.handles.delete(u.handle);
+    u.handle = h;
+    u.handleAt = Date.now();
+    this.handles.set(h, userId);
+    this.persist();
+    return u;
+  }
+
   updateProfile(id, patch) {
     const u = this.users.get(id);
     Object.assign(u.profile, patch);
@@ -117,6 +147,7 @@ export class FileStore {
     if (!u) return false;
     this.tokens.delete(u.token);
     for (const k of u.identities ?? []) this.identities.delete(k);
+    if (u.handle && this.handles.get(u.handle) === id) this.handles.delete(u.handle);
     this.deletePhoto(u.profile?.photoUrl);
     this.users.delete(id);
     this.persist();
@@ -167,6 +198,23 @@ export function decodeDataUrl(dataUrl) {
   const mime = sniffImage(buf);
   if (!mime) throw new Error('이미지 파일이 아니다');
   return { buf, mime };
+}
+
+// 운영자·서비스로 오해할 수 있는 아이디
+// (앞에 붙어도 막는 것: 서비스·운영 이름 / 똑같을 때만 막는 것: 짧은 일반 단어)
+const RESERVED_HANDLES = /^(admin|nasol|nsns|dasion|official|support|staff|operator|moderator)|^(root|system|help|manager|master|gm|mod|test|null|undefined)$/;
+
+/** 아이디 규칙: 영문 소문자·숫자·밑줄(_)·점(.) 4~15자, 영문이나 숫자로 시작, 점은 끝이나 연속으로 못 씀 */
+export function validateHandle(input) {
+  const h = String(input ?? '').trim().toLowerCase().replace(/^@/, '');
+  if (!h) throw new Error('아이디를 입력해 줘');
+  if (h.length < 4 || h.length > 15) throw new Error('아이디는 4~15자로 정해 줘');
+  if (!/^[a-z0-9._]+$/.test(h)) throw new Error('아이디는 영문 소문자·숫자·밑줄(_)·점(.)만 쓸 수 있어');
+  if (!/^[a-z0-9]/.test(h)) throw new Error('아이디는 영문이나 숫자로 시작해 줘');
+  if (/\.$/.test(h) || /\.\./.test(h)) throw new Error('점(.)은 끝에 오거나 두 번 연속으로 쓸 수 없어');
+  if (/^\d+$/.test(h)) throw new Error('숫자만으로는 정할 수 없어');
+  if (RESERVED_HANDLES.test(h)) throw new Error('쓸 수 없는 아이디야');
+  return h;
 }
 
 /** 프로필 입력 검증. 실명·상세주소·연락처·생년월일은 받지 않는다. */

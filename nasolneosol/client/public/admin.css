@@ -60,3 +60,4 @@ code { font-size: 12px; background: #f6edf1; padding: 1px 5px; border-radius: 6p
   .stats { grid-template-columns: repeat(3, 1fr); }
   .people { grid-template-columns: 1fr; }
 }
+.tiny-btn { padding: 1px 8px; font-size: 11px; margin-left: 4px; }

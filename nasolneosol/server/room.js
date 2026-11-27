@@ -87,7 +87,22 @@ export class Room {
 
   start() {
     if (this.phase !== 'waiting') return;
+    // 시작할 때 이미 접속해 있지 않은 사람은 지금부터 나가 있는 것으로 센다
+    for (const p of this.participants.values()) if (!p.isBot && !p.connected && p.absentSince == null) p.absentSince = this.now();
     this.enterPhase(0);
+  }
+
+  /** 지금까지 한 번에 가장 오래 나가 있던 시간 (지금 나가 있는 중이면 그 시간도 포함) */
+  longestAbsenceMs(pid, t = this.now()) {
+    const p = this.participants.get(pid);
+    if (!p) return 0;
+    return Math.max(p.maxAbsentMs ?? 0, p.absentSince != null ? t - p.absentSince : 0);
+  }
+
+  /** 무단 이탈한 참가자 (봇 제외). 최종 선택이 끝난 뒤 한 번 본다 */
+  leavers(t = this.now()) {
+    const lim = this.ms(this.cfg.leavePenalty?.absentSec ?? 180);
+    return [...this.participants.values()].filter((p) => !p.isBot && this.longestAbsenceMs(p.id, t) >= lim).map((p) => p.id);
   }
 
   tick() {
@@ -1028,6 +1043,13 @@ export class Room {
     const p = this.participants.get(pid);
     if (!p || p.connected === on) return;
     p.connected = on;
+    // 무단 이탈 판단용: 한 번에 가장 오래 나가 있던 시간
+    const t = this.now();
+    if (!on) p.absentSince = t;
+    else if (p.absentSince != null) {
+      p.maxAbsentMs = Math.max(p.maxAbsentMs ?? 0, t - p.absentSince);
+      p.absentSince = null;
+    }
     this.log(on ? 'connect' : 'disconnect', { pid });
     this.syncVoice();
     this.markDirty();

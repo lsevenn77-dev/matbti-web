@@ -120,6 +120,8 @@ function showSignup(editing = false) {
   $('#pf-title').textContent = editing ? '프로필 수정' : '프로필 만들기';
   f.querySelector('button[type=submit]').textContent = editing ? '저장' : '시작하기';
   $('#pf-ok').hidden = !st.signupTicket || editing;
+  f.handle.value = editing ? st.me?.handle ?? '' : f.handle.value;
+  setHandleHint('');
   if (editing && st.me) {
     f.age.value = st.me.profile.age;
     f.job.value = st.me.profile.job;
@@ -140,7 +142,7 @@ const DRAFT_KEY = 'nsns_signup_draft';
 function saveDraft() {
   const f = $('#signup-form');
   if (f.dataset.editing === '1') return;
-  const d = { gender: f.gender.value, age: f.age.value, job: f.job.value, region: f.region.value, ageUp: f.ageUp.value, ageDown: f.ageDown.value, photo: photoData };
+  const d = { handle: f.handle.value, gender: f.gender.value, age: f.age.value, job: f.job.value, region: f.region.value, ageUp: f.ageUp.value, ageDown: f.ageDown.value, photo: photoData };
   // localStorage: 폰이 사진 앱을 여는 동안 브라우저를 아예 종료해도 남는다
   try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, photo: null })); } catch {}
@@ -152,6 +154,7 @@ function restoreDraft() {
   if (!d) return;
   const f = $('#signup-form');
   for (const r of f.gender) r.checked = r.value === d.gender;
+  if (d.handle) f.handle.value = d.handle;
   if (d.age) f.age.value = d.age;
   if (d.job) f.job.value = d.job;
   if (d.region) f.region.value = d.region;
@@ -169,6 +172,34 @@ $('#btn-signup-back').addEventListener('click', () => {
   else showStart();
 });
 $('#signup-form').addEventListener('input', saveDraft);
+
+// 아이디: 입력하는 동안 쓸 수 있는지 바로 알려 준다
+const HANDLE_HINT = '친구가 이 아이디로 나를 찾아 친구 신청을 해. 게임 안에서는 보이지 않아.';
+function setHandleHint(text, state) {
+  const el = $('#handle-hint');
+  el.textContent = text || HANDLE_HINT;
+  el.className = `tiny ${state ?? ''}`;
+}
+/** @returns {Promise<{ok:boolean, error?:string, handle?:string}>} */
+async function checkHandle(h) {
+  const r = await fetch(`/api/handle/check?h=${encodeURIComponent(h)}`, { headers: authHeaders() }).catch(() => null);
+  return r ? r.json().catch(() => ({ ok: false, error: '확인하지 못했어' })) : { ok: false, error: '연결이 끊겼어' };
+}
+let handleTimer = null;
+$('#signup-form').handle.addEventListener('input', (e) => {
+  const inp = e.target;
+  const low = inp.value.toLowerCase().replace(/\s/g, '');
+  if (low !== inp.value) inp.value = low;
+  clearTimeout(handleTimer);
+  if (!low) return setHandleHint('');
+  if ($('#signup-form').dataset.editing === '1' && low === st.me?.handle) return setHandleHint('지금 쓰고 있는 아이디야', 'ok');
+  setHandleHint('확인 중…');
+  handleTimer = setTimeout(async () => {
+    const j = await checkHandle(low);
+    if (inp.value !== low) return;
+    setHandleHint(j.ok ? `✓ @${j.handle} 쓸 수 있어` : j.error, j.ok ? 'ok' : 'bad');
+  }, 350);
+});
 $('#signup-form').addEventListener('change', saveDraft);
 
 $('#photo-input').addEventListener('change', async (e) => {
@@ -211,6 +242,16 @@ $('#signup-form').addEventListener('submit', async (e) => {
   if (st.signupTicket && !editing) body.signupTicket = st.signupTicket;
   if (photoData) body.photo = photoData;
   if (!editing && !photoData) return ($('#signup-error').textContent = '프로필 사진을 선택해 줘');
+  const handle = f.handle.value.trim().toLowerCase();
+  if (!editing) body.handle = handle;
+  // 수정: 아이디가 바뀌었으면 먼저 바꾼다
+  if (editing && handle && handle !== st.me?.handle) {
+    try {
+      st.me = await api('/api/me/handle', { handle });
+    } catch (err) {
+      return ($('#signup-error').textContent = err.message);
+    }
+  }
   const r = await fetch(editing ? '/api/me' : '/api/signup', {
     method: editing ? 'PUT' : 'POST',
     headers: { 'Content-Type': 'application/json', ...(editing ? { Authorization: `Bearer ${st.token}` } : {}) },
@@ -244,7 +285,7 @@ function showLobby(status) {
   $('#lobby-photo').src = st.me.profile.photoUrl;
   const p = st.me.profile;
   const range = p.ageUp == null || (p.ageUp >= 40 && p.ageDown >= 40) ? '나이 상관없음' : `${Math.max(19, p.age - (p.ageDown ?? 40))}~${p.age + (p.ageUp ?? 40)}세와 매칭`;
-  $('#lobby-name').textContent = `${G[p.gender]} · ${p.age}세`;
+  showLobbyName();
   $('#lobby-me').textContent = `${p.job} · ${p.region} · ${range}`;
   $('#btn-edit-2').hidden = false;
   $('#btn-delete-account').hidden = false;
@@ -272,6 +313,7 @@ function showLobby(status) {
   }
   renderWallet();
   renderAccount();
+  renderLeaveNote();
   renderParty();
   if (status?.inQueue && st.party.party) $('#queue-msg').textContent += ' 👥 친구와 함께 대기 중';
   refreshSocialSoon();
@@ -283,6 +325,8 @@ function showLobby(status) {
       st.me = me;
       renderWallet();
       renderAccount();
+      renderLeaveNote();
+      if ($('#screen-lobby').hidden === false) showLobbyName();
     }).catch(() => {});
   }
   if (st.payResult) {
@@ -294,6 +338,35 @@ function showLobby(status) {
   if (st.info) {
     $('#lobby-info').textContent = `이번 설정: 데이트 ${st.info.dateRounds}회 · 예상 약 ${Math.round(st.info.estimateMinutes)}분${st.info.timeScale !== 1 ? ` (개발 배속 ×${st.info.timeScale})` : ''} · 음성: 모의 구현`;
   }
+}
+// 게임 중에 창을 닫으려 하면 한 번 묻는다 (3분 넘게 안 돌아오면 무단 이탈로 기록)
+addEventListener('beforeunload', (e) => {
+  const ph = st.view?.phase;
+  if (!ph || ['result', 'contact', 'ended'].includes(ph)) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+
+function showLobbyName() {
+  const p = st.me.profile;
+  $('#lobby-name').innerHTML = `${G[p.gender]} · ${p.age}세 ${st.me.handle ? `<span class="me-handle">@${esc(st.me.handle)}</span>` : '<button type="button" class="me-handle need" id="btn-set-handle">아이디 정하기</button>'}`;
+  $('#btn-set-handle')?.addEventListener('click', () => openSocial('friends', 'add'));
+}
+/** 무단 이탈 안내 (대기 화면) */
+function renderLeaveNote() {
+  const l = st.me?.leave;
+  let el = $('#leave-note');
+  const text = l?.blockedUntil > Date.now()
+    ? `⛔ 게임 중 무단 이탈이 반복돼서 ${new Date(l.blockedUntil).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}까지 게임 입장이 제한돼. (최근 30일 ${l.count}회)`
+    : l?.count ? `⚠️ 최근 30일 무단 이탈 ${l.count}회. 다시 이탈하면 입장이 제한될 수 있어.` : '';
+  if (!text) return el?.remove();
+  if (!el) {
+    el = document.createElement('p');
+    el.id = 'leave-note';
+    el.className = 'leave-note';
+    $('.hero-actions').prepend(el);
+  }
+  el.textContent = text;
 }
 $('#btn-edit').addEventListener('click', () => showSignup(true));
 $('#btn-edit-2').addEventListener('click', () => showSignup(true));
@@ -348,7 +421,7 @@ function presence(c) {
 function personRow(c, actions = '', sub = '') {
   return `<div class="person" data-id="${esc(c.id)}">
     <img src="${esc(c.photoUrl)}" alt="" loading="lazy" />
-    <div class="p-text"><div class="p-name">${esc(c.alias || '이름 없음')} <span class="g ${c.gender}">${GS[c.gender] ?? ''}</span> <span class="p-age">${c.age}세</span></div>${sub || presence(c)}</div>
+    <div class="p-text"><div class="p-name">${esc(c.alias || (c.handle ? `@${c.handle}` : '이름 없음'))} <span class="g ${c.gender}">${GS[c.gender] ?? ''}</span> <span class="p-age">${c.age}세</span>${c.alias && c.handle ? ` <span class="p-handle">@${esc(c.handle)}</span>` : ''}</div>${sub || presence(c)}</div>
     <div class="p-acts">${actions}</div>
   </div>`;
 }
@@ -364,7 +437,8 @@ async function loadSocial() {
     soc.data = d;
     renderSocialBadges();
     renderFriendsCard();
-    if (!$('#modal-social').hidden && $('#dm').hidden) renderSocial();
+    // 아이디로 추가 화면은 입력 중일 수 있어 다시 그리지 않는다
+    if (!$('#modal-social').hidden && $('#dm').hidden && !(soc.mode === 'friends' && soc.sub === 'add')) renderSocial();
     return d;
   }).catch(() => null).finally(() => (soc.loading = null));
   return soc.loading;
@@ -386,10 +460,10 @@ function renderFriendsCard() {
   $('#fc-count').textContent = `${d.friends.length}명`;
   $('#fc-list').innerHTML = d.friends.length
     ? d.friends.slice(0, 6).map((c) => personRow(c, `<button type="button" class="ic" data-act="chat" aria-label="대화하기">💬</button>`)).join('')
-    : `<p class="empty">아직 친구가 없어. 게임에서 만난 사람에게 친구 신청을 해 봐.</p>`;
+    : `<p class="empty">아직 친구가 없어. 친구 아이디를 알면 바로 신청할 수 있어.</p>`;
   bindPeople($('#fc-list'));
 }
-$('#btn-friend-add').addEventListener('click', () => openSocial('friends', 'met'));
+$('#btn-friend-add').addEventListener('click', () => openSocial('friends', 'add'));
 
 function openSocial(mode, sub) {
   soc.mode = mode;
@@ -408,25 +482,28 @@ function renderSocial() {
   const titles = { friends: '👥 친구', matches: '💗 나의 인연', messages: '💬 메시지' };
   $('#soc-title').textContent = titles[soc.mode];
   const tabs = soc.mode === 'friends'
-    ? [['list', `친구 목록${d ? ` ${d.friends.length}` : ''}`], ['incoming', `받은 신청${d?.incoming.length ? ` ${d.incoming.length}` : ''}`], ['met', '함께한 사람']]
+    ? [['list', `친구 목록${d ? ` ${d.friends.length}` : ''}`], ['add', '아이디로 추가'], ['incoming', `신청${d?.incoming.length ? ` ${d.incoming.length}` : ''}`], ['met', '함께한 사람']]
     : [];
   $('#soc-tabs').innerHTML = tabs.map(([k, l]) => `<button type="button" data-sub="${k}" class="${soc.sub === k ? 'on' : ''}">${esc(l)}</button>`).join('');
   $('#soc-tabs').hidden = !tabs.length;
   for (const b of document.querySelectorAll('#soc-tabs button')) b.onclick = () => { soc.sub = b.dataset.sub; renderSocial(); };
   const body = $('#soc-body');
+  if (soc.mode === 'friends' && soc.sub === 'add') return renderAddFriend(body);
   if (!d) return (body.innerHTML = '<p class="empty">불러오는 중…</p>');
   let html = '';
   if (soc.mode === 'friends' && soc.sub === 'list') {
     html = d.friends.length
       ? d.friends.map((c) => personRow(c, `<button type="button" class="ic" data-act="chat" aria-label="대화하기">💬</button>`)).join('')
-      : '<p class="empty">아직 친구가 없어.<br>"함께한 사람"에서 게임에서 만난 사람에게 친구 신청을 할 수 있어.</p>';
+      : '<p class="empty">아직 친구가 없어.<br>"아이디로 추가"에서 친구 아이디로 신청하거나, "함께한 사람"에서 게임에서 만난 사람에게 신청할 수 있어.</p>';
   } else if (soc.mode === 'friends' && soc.sub === 'incoming') {
-    html = d.incoming.length
-      ? d.incoming.map((c) => personRow(c, `<button type="button" class="pill-btn pk" data-act="accept">수락</button><button type="button" class="pill-btn" data-act="decline">거절</button>`, `<span class="st">${ago(c.at)} 신청</span>`)).join('')
-      : '<p class="empty">받은 친구 신청이 없어.</p>';
+    html = '<h4 class="soc-sec">받은 신청</h4>' + (d.incoming.length
+      ? d.incoming.map((c) => personRow(c, `<button type="button" class="pill-btn pk" data-act="accept">수락</button><button type="button" class="pill-btn" data-act="decline">거절</button><button type="button" class="ic sm" data-act="block" aria-label="차단" title="차단">🚫</button>`, `<span class="st">${ago(c.at)} 신청${c.alias ? '' : ' · 아이디로 신청'}</span>`)).join('')
+      : '<p class="empty">받은 친구 신청이 없어.</p>');
+    const sent = d.sent ?? [];
+    if (sent.length) html += '<h4 class="soc-sec">보낸 신청</h4>' + sent.map((c) => personRow(c, '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>', `<span class="st">${ago(c.at)} 보냄 · 수락 기다리는 중</span>`)).join('');
   } else if (soc.mode === 'friends' && soc.sub === 'met') {
     html = d.met.length
-      ? `<p class="hint">같은 게임에서 만난 사람에게만 친구 신청을 할 수 있어.</p>` + d.met.map((c) => personRow(c,
+      ? `<p class="hint">같은 게임에서 만난 사람에게 바로 친구 신청을 할 수 있어.</p>` + d.met.map((c) => personRow(c,
         (c.friend ? '<span class="tag">친구</span>' : c.requested ? '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>' : '<button type="button" class="pill-btn pk" data-act="request">친구 신청</button>') + '<button type="button" class="ic sm" data-act="report" aria-label="신고" title="신고">🚨</button>',
         `<span class="st">${dateLabel(c.at)} 함께함</span>`)).join('')
       : '<p class="empty">아직 함께한 사람이 없어. 게임을 한 판 하면 여기에 나와.</p>';
@@ -441,6 +518,74 @@ function renderSocial() {
   }
   body.innerHTML = html;
   bindPeople(body, soc.mode === 'messages');
+}
+
+/** 친구 > 아이디로 추가: 내 아이디 (없으면 정하기) + 친구 아이디로 찾아서 신청 */
+function renderAddFriend(body) {
+  const mine = st.me?.handle;
+  body.innerHTML = `
+    <div class="add-friend">
+      <div class="af-me">
+        <span class="muted small">내 아이디</span>
+        ${mine
+          ? `<b class="af-handle">@${esc(mine)}</b><button type="button" class="pill-btn" id="af-copy">복사</button>`
+          : `<form id="af-set" class="af-row" autocomplete="off"><span class="handle-in"><i aria-hidden="true">@</i><input id="af-set-in" maxlength="15" autocapitalize="none" spellcheck="false" placeholder="아이디 정하기" /></span><button class="pill-btn pk" type="submit">정하기</button></form>
+             <p class="tiny muted" id="af-set-note">아이디를 정하면 친구가 나를 찾아 신청할 수 있어. 영문 소문자·숫자·_ . 4~15자</p>`}
+      </div>
+      <form id="af-find" class="af-row" autocomplete="off">
+        <span class="handle-in"><i aria-hidden="true">@</i><input id="af-find-in" maxlength="16" autocapitalize="none" spellcheck="false" placeholder="친구 아이디 입력" /></span>
+        <button class="pill-btn pk" type="submit">찾기</button>
+      </form>
+      <div id="af-result"></div>
+      <p class="hint">상대가 수락해야 친구가 돼. 모르는 사람의 신청은 거절하거나 차단할 수 있어.</p>
+    </div>`;
+  $('#af-copy')?.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(mine); toastLobby('아이디를 복사했어'); } catch { toastLobby(`내 아이디: @${mine}`); }
+  });
+  $('#af-set')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      st.me = await api('/api/me/handle', { handle: $('#af-set-in').value });
+      toastLobby(`아이디를 @${st.me.handle} 로 정했어`);
+      showLobbyName();
+      renderAddFriend(body);
+    } catch (err) {
+      $('#af-set-note').textContent = err.message;
+      $('#af-set-note').className = 'tiny bad';
+    }
+  });
+  $('#af-find').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const h = $('#af-find-in').value.trim().toLowerCase().replace(/^@/, '');
+    const out = $('#af-result');
+    if (!h) return;
+    out.innerHTML = '<p class="empty">찾는 중…</p>';
+    try {
+      const c = await api(`/api/users/find?handle=${encodeURIComponent(h)}`);
+      const act = c.self ? '<span class="tag">나</span>'
+        : c.friend ? '<span class="tag">이미 친구</span>'
+        : c.incoming ? '<button type="button" class="pill-btn pk" data-act="accept">신청 수락</button>'
+        : c.requested ? '<span class="tag">신청 보냄</span>'
+        : '<button type="button" class="pill-btn pk" data-act="handle-request">친구 신청</button>';
+      out.innerHTML = `<div class="person" data-id="${esc(c.id)}"><img src="${esc(c.photoUrl)}" alt="" /><div class="p-text"><div class="p-name">@${esc(c.handle)} <span class="g ${c.gender}">${GS[c.gender] ?? ''}</span></div></div><div class="p-acts">${act}</div></div>`;
+      const btn = out.querySelector('[data-act="handle-request"]');
+      if (btn) btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const r = await api('/api/friends/request', { handle: c.handle });
+          toastLobby(r.status === 'friends' ? '서로 신청해서 바로 친구가 됐어!' : `@${c.handle} 에게 친구 신청을 보냈어`);
+          btn.outerHTML = `<span class="tag">${r.status === 'friends' ? '친구' : '신청 보냄'}</span>`;
+          loadSocial();
+        } catch (err) {
+          toastLobby(err.message);
+          btn.disabled = false;
+        }
+      };
+      else bindPeople(out);
+    } catch (err) {
+      out.innerHTML = `<p class="empty">${esc(err.message)}</p>`;
+    }
+  });
 }
 
 function bindPeople(root, rowOpensChat = false) {
@@ -459,8 +604,10 @@ function bindPeople(root, rowOpensChat = false) {
           if ($('#modal-social').hidden) openSocial('messages');
           return openDm(id);
         }
+        if (act === 'block' && !confirm('이 사람을 차단할까? 서로 메시지와 친구 신청을 보낼 수 없게 돼.')) return;
         b.disabled = true;
         try {
+          if (act === 'block') { await api('/api/block', { userId: id }); toastLobby('차단했어'); }
           if (act === 'request') {
             const r = await api('/api/friends/request', { userId: id });
             toastLobby(r.status === 'friends' ? '서로 신청해서 바로 친구가 됐어!' : '친구 신청을 보냈어');
@@ -967,6 +1114,14 @@ function onMessage(m) {
     onParty(m);
   } else if (m.t === 'partyNote') {
     toastLobby(m.text);
+  } else if (m.t === 'leavePenalty') {
+    // 게임 중 오래 나가 있었던 경우 (결과 화면에서 받는다)
+    if (st.me) st.me.leave = { count: m.count, blockedUntil: m.blockedUntil };
+    const msg = m.blockedUntil
+      ? `⛔ 게임 중 3분 넘게 나가 있어서 무단 이탈로 기록됐어 (최근 30일 ${m.count}회). ${new Date(m.blockedUntil).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}까지 게임 입장이 제한돼.`
+      : '⚠️ 게임 중 3분 넘게 나가 있어서 무단 이탈로 기록됐어. 30일 안에 다시 이탈하면 24시간 입장이 제한돼.';
+    toastAny(msg);
+    renderLeaveNote();
   } else if (m.t === 'social') {
     refreshSocialSoon();
   } else if (m.t === 'dm') {

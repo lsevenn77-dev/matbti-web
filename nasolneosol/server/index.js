@@ -50,6 +50,7 @@ export function createServer(opts = {}) {
   const pay = payConfig(env);
   const signupTickets = new Map(); // ticket → { identity, until }  (간편 로그인 후 아직 프로필이 없는 사람)
   const kakaoStates = new Map(); // state → { linkUserId, until }
+  const findHits = new Map(); // userId → [시각] 아이디 찾기 횟수 제한
   const authResults = new Map(); // id → { body, until }  (카카오 리다이렉트 결과 전달용)
   const shortId = () => randomBytes(18).toString('base64url');
   const sweep = (m) => { const t = Date.now(); for (const [k, v] of m) if (v.until < t) m.delete(k); };
@@ -91,6 +92,8 @@ export function createServer(opts = {}) {
     if (userRoom.has(user.id) || queue.some((q) => q.userId === user.id)) return;
     const party = partyOf(user.id);
     if (party) return joinQueueParty(user, party);
+    const blocked = leaveBlockMsg(user);
+    if (blocked) return send(user.id, { t: 'queueError', error: blocked });
     if (!canEnter(user)) return send(user.id, { t: 'queueError', error: '오늘 남은 입장권이 없어. 입장권을 사거나 내일 다시 와 줘.' });
     queue.push({ userId: user.id, gender: user.profile.gender, at: Date.now() });
     tryFormRoom();
@@ -106,6 +109,8 @@ export function createServer(opts = {}) {
       if (!u) return err('함께 입장하는 친구를 찾을 수 없어');
       if (userRoom.has(id)) return err('함께 입장하는 친구가 아직 게임 중이야');
       if (!u.isBot && !isOnline(id)) return err('함께 입장하는 친구가 접속해 있지 않아');
+      const blocked = leaveBlockMsg(u, id === user.id ? '' : '함께 입장하는 친구가 ');
+      if (blocked) return err(blocked);
       if (!canEnter(u)) return err(`${who} 남은 입장권이 없어`);
     }
     const at = Date.now();
@@ -226,7 +231,7 @@ export function createServer(opts = {}) {
   function tryFormRoom() {
     // 선착순 + 나이 조건: 방 안의 모든 남녀 쌍이 서로의 나이 범위 안에 들어야 한다
     // 입장권이 남아 있는 사람만 (대기 중에 날짜가 바뀌는 등)
-    const ok = (id) => { const u = store.get(id); return !!u && canEnter(u); };
+    const ok = (id) => { const u = store.get(id); return !!u && canEnter(u) && !leaveState(u).blockedUntil; };
     // 동반 입장 일행은 한 명이라도 입장권이 없으면 일행 전체를 이번 방 후보에서 뺀다
     const group = formGroup(queueEntries().filter((q) => (q.partyId ? queue.filter((x) => x.partyId === q.partyId).every((x) => ok(x.userId)) : ok(q.userId))), config.slots);
     if (!group) return;
@@ -320,6 +325,7 @@ export function createServer(opts = {}) {
       id: u.id, gender: p.gender, age: p.age, job: p.job, region: p.region, photoUrl: p.photoUrl,
       createdAt: u.createdAt, linked: (u.identities ?? []).map((k) => k.split(':')[0]), isBot: !!u.isBot,
       online: isOnline(u.id), inGame: userRoom.has(u.id), ban: banOf(u), reportsAgainst: reports.countAgainst(u.id),
+      handle: u.handle ?? null, leave: leaveState(u),
     };
   }
   async function handleAdmin(req, res, p, url) {
@@ -366,6 +372,16 @@ export function createServer(opts = {}) {
         console.log(`[ban] 해제 ${u.id.slice(0, 8)}`);
         return json(res, 200, { ok: true });
       }
+      if (p === '/api/admin/clear-leave') {
+        // 무단 이탈 기록·입장 제한 지우기 (통신 장애 등 억울한 경우)
+        const u = store.get(String(body.userId ?? ''));
+        if (!u) return json(res, 404, { error: '회원을 찾을 수 없어' });
+        delete u.leaves;
+        delete u.leaveBlockUntil;
+        store.persist();
+        console.log(`[leave] 기록 삭제 ${u.id.slice(0, 8)}`);
+        return json(res, 200, { ok: true });
+      }
     } catch (e) {
       if (e instanceof ReportError || /찾을 수 없어/.test(e.message)) return json(res, 400, { error: e.message });
       throw e;
@@ -387,9 +403,12 @@ export function createServer(opts = {}) {
   function personCard(me, otherId) {
     const u = store.get(otherId);
     if (!u) return null;
+    const alias = relations.aliasFor(me, otherId) || (u.isBot ? '봇' : '');
     return {
       id: u.id,
-      alias: relations.aliasFor(me, otherId) || (u.isBot ? '봇' : ''),
+      alias,
+      // 아이디는 친구이거나, 게임에서 만난 적 없이 아이디로 오간 사이에만 보인다 (게임 가명과 연결되지 않게)
+      handle: relations.areFriends(me, otherId) || !alias ? u.handle ?? '' : '',
       gender: u.profile.gender,
       age: u.profile.age,
       photoUrl: u.profile.photoUrl,
@@ -403,12 +422,14 @@ export function createServer(opts = {}) {
     const card = (id) => personCard(me, id);
     const keep = (x) => x.filter((c) => c && !relations.isBlocked(me, c.id));
     const friends = keep([...(relations.friends.get(me) ?? [])].map(card)).sort((a, b) => Number(b.online) - Number(a.online));
-    const outgoing = new Set(relations.outgoing(me).map((r) => r.userId));
+    const out = relations.outgoing(me);
+    const outgoing = new Set(out.map((r) => r.userId));
     const incoming = keep(relations.incoming(me).map((r) => card(r.userId) && { ...card(r.userId), at: r.at }));
+    const sent = keep(out.map((r) => card(r.userId) && { ...card(r.userId), at: r.at }));
     const met = keep([...(relations.met.get(me) ?? [])].reverse().map(([id, m]) => card(id) && { ...card(id), at: m.at, friend: relations.areFriends(me, id), requested: outgoing.has(id) }));
     const matches = (relations.matches.get(me) ?? []).filter((m) => !relations.isBlocked(me, m.partnerId)).map((m) => card(m.partnerId) && { ...card(m.partnerId), at: m.at, roomId: m.roomId }).filter(Boolean);
     const threads = relations.threadsOf(me).map((t) => card(t.userId) && { ...card(t.userId), last: { text: t.last.text, at: t.last.at, mine: t.last.from === me }, unread: t.unread }).filter(Boolean);
-    return { friends, incoming, met, matches, threads, unread: threads.reduce((n, t) => n + t.unread, 0) };
+    return { friends, incoming, sent, met, matches, threads, unread: threads.reduce((n, t) => n + t.unread, 0) };
   }
 
   // ── 게임 루프 ───────────────────────────────────────
@@ -419,6 +440,11 @@ export function createServer(opts = {}) {
       if (room.dirty) {
         room.dirty = false;
         for (const p of room.participants.values()) if (!p.isBot) sendState(room, p);
+      }
+      // 최종 선택이 끝나면 무단 이탈을 한 번 본다 (결과·연락처 단계에서 나가는 건 괜찮다)
+      if (!room.leaveChecked && ['result', 'contact', 'ended'].includes(room.phase)) {
+        room.leaveChecked = true;
+        for (const pid of room.leavers()) recordLeave(room.participants.get(pid).userId, id);
       }
       if (room.phase === 'ended' && !room.archived) {
         room.archived = true;
@@ -493,6 +519,33 @@ export function createServer(opts = {}) {
     }
     return b;
   }
+  // ── 무단 이탈 ──
+  const LP = config.leavePenalty;
+  /** 최근 windowDays 안의 이탈 기록과 입장 제한 */
+  function leaveState(u, now = Date.now()) {
+    const recent = (u?.leaves ?? []).filter((x) => now - x.at < LP.windowDays * 24 * 3600 * 1000);
+    const until = u?.leaveBlockUntil > now ? u.leaveBlockUntil : null;
+    return { count: recent.length, blockedUntil: until };
+  }
+  function recordLeave(userId, roomId) {
+    const u = store.get(userId);
+    if (!u || u.isBot) return;
+    const now = Date.now();
+    u.leaves = [...(u.leaves ?? []).filter((x) => now - x.at < LP.windowDays * 24 * 3600 * 1000), { at: now, roomId }].slice(-20);
+    const n = u.leaves.length;
+    const hours = LP.blockHours[Math.min(n, LP.blockHours.length) - 1] ?? 0;
+    if (hours > 0) u.leaveBlockUntil = Math.max(u.leaveBlockUntil ?? 0, now + hours * 3600 * 1000);
+    store.persist();
+    console.log(`[leave] ${userId.slice(0, 8)} 무단 이탈 ${n}회 (최근 ${LP.windowDays}일)${hours ? ` → ${hours}시간 입장 제한` : ' → 경고'}`);
+    send(userId, { t: 'leavePenalty', count: n, blockedUntil: hours > 0 ? u.leaveBlockUntil : null });
+  }
+  const untilText = (at) => new Date(at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  /** 입장 제한 중이면 안내 문구 */
+  function leaveBlockMsg(u, who = '') {
+    const s = leaveState(u);
+    return s.blockedUntil ? `${who}게임 중 무단 이탈이 반복돼서 ${untilText(s.blockedUntil)}까지 게임 입장이 제한돼.` : null;
+  }
+
   const banBody = (b) => ({ error: '이용이 정지된 계정이야', banned: { reason: b.reason, until: b.until } });
   function applyBan(userId, { days, reason }) {
     const u = store.get(userId);
@@ -514,7 +567,9 @@ export function createServer(opts = {}) {
   function meResponse(u) {
     return {
       id: u.id,
+      handle: u.handle ?? null,
       profile: u.profile,
+      leave: leaveState(u),
       inRoom: userRoom.has(u.id),
       wallet: entryStatus(u),
       linked: (u.identities ?? []).map((k) => k.split(':')[0]),
@@ -565,6 +620,8 @@ export function createServer(opts = {}) {
       if (p === '/api/signup' && req.method === 'POST') {
         const body = await readBody(req);
         const profile = validateProfile(body, { minAge: config.minAge });
+        // 아이디: 가입 화면에서 받는다 (안 보내면 나중에 친구 화면에서 정한다)
+        const handle = body.handle != null && body.handle !== '' ? store.checkHandle(body.handle) : null;
         // 간편 로그인으로 시작한 경우 그 계정에 연결
         let ident = null;
         if (body.signupTicket) {
@@ -577,6 +634,9 @@ export function createServer(opts = {}) {
         const { buf, mime } = decodeDataUrl(body.photo);
         profile.photoUrl = store.savePhoto(buf, mime);
         const u = store.createUser(profile);
+        if (handle) {
+          try { store.setHandle(u.id, handle); } catch {} // 그 사이 누가 먼저 가져간 경우: 나중에 다시 정한다
+        }
         if (ident) store.linkIdentity(u.id, ident.provider, ident.sub);
         return json(res, 200, { token: u.token, me: meResponse(u) });
       }
@@ -602,6 +662,44 @@ export function createServer(opts = {}) {
         tryFormRoom();
         broadcastQueue();
         return json(res, 200, meResponse(u));
+      }
+      // ── 아이디 ──
+      if (p === '/api/handle/check' && req.method === 'GET') {
+        const me = authUser(req);
+        try {
+          return json(res, 200, { ok: true, handle: store.checkHandle(url.searchParams.get('h'), me?.id ?? null) });
+        } catch (e) {
+          return json(res, 200, { ok: false, error: e.message });
+        }
+      }
+      if (p === '/api/me/handle' && req.method === 'POST') {
+        const u = authUser(req);
+        if (!u) return json(res, 401, { error: '로그인이 필요하다' });
+        const body = await readBody(req, 2 * 1024);
+        // 바꾸기는 7일에 한 번 (처음 정할 때는 바로)
+        const wait = u.handle && u.handleAt ? u.handleAt + 7 * 24 * 3600 * 1000 - Date.now() : 0;
+        const next = String(body.handle ?? '').trim().toLowerCase().replace(/^@/, '');
+        if (wait > 0 && next !== u.handle) return json(res, 400, { error: `아이디는 7일에 한 번 바꿀 수 있어. ${untilText(Date.now() + wait)}부터 다시 바꿀 수 있어` });
+        store.setHandle(u.id, next);
+        return json(res, 200, meResponse(u));
+      }
+      if (p === '/api/users/find' && req.method === 'GET') {
+        const u = authUser(req);
+        if (!u) return json(res, 401, { error: '로그인이 필요하다' });
+        // 아이디를 하나씩 넣어 보며 회원을 훑는 걸 막는다: 1분에 20번
+        const now = Date.now();
+        const hits = (findHits.get(u.id) ?? []).filter((t) => now - t < 60 * 1000);
+        if (hits.length >= 20) return json(res, 429, { error: '너무 많이 찾고 있어. 잠깐 뒤에 다시 해 줘' });
+        hits.push(now);
+        findHits.set(u.id, hits);
+        const t = store.byHandle(url.searchParams.get('handle'));
+        if (!t || t.isBot || banOf(t) || relations.isBlocked(u.id, t.id)) return json(res, 404, { error: '그 아이디를 쓰는 사람이 없어' });
+        const outgoing = relations.outgoing(u.id).some((r) => r.userId === t.id);
+        const incoming = relations.incoming(u.id).some((r) => r.userId === t.id);
+        return json(res, 200, {
+          id: t.id, handle: t.handle, gender: t.profile.gender, photoUrl: t.profile.photoUrl,
+          self: t.id === u.id, friend: relations.areFriends(u.id, t.id), requested: outgoing, incoming,
+        });
       }
       // ── 신고 ──
       if (p === '/api/report' && req.method === 'POST') {
@@ -669,10 +767,13 @@ export function createServer(opts = {}) {
           }
           if (req.method !== 'POST') return json(res, 405, { error: 'method' });
           const body = await readBody(req, 8 * 1024);
-          const other = String(body.userId ?? body.to ?? '');
+          // 아이디로 친구 신청: { handle }
+          const byHandle = p === '/api/friends/request' && body.handle != null && body.userId == null ? store.byHandle(body.handle) : null;
+          if (p === '/api/friends/request' && body.handle != null && body.userId == null && (!byHandle || byHandle.isBot || banOf(byHandle) || relations.isBlocked(u.id, byHandle.id))) return json(res, 404, { error: '그 아이디를 쓰는 사람이 없어' });
+          const other = byHandle ? byHandle.id : String(body.userId ?? body.to ?? '');
           if (!store.get(other)) return json(res, 404, { error: '상대를 찾을 수 없어' });
           if (p === '/api/friends/request') {
-            const r = relations.request(u.id, other);
+            const r = relations.request(u.id, other, { direct: !!byHandle });
             send(other, { t: 'social' });
             return json(res, 200, r);
           }

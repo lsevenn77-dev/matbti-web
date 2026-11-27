@@ -1,7 +1,8 @@
 // 게임 밖 관계: 함께한 사람 · 친구 · 나의 인연(최종 매칭) · 1:1 메시지 · 차단
 //
 // 규칙
-// - 친구 신청은 같은 게임에서 만난 사람에게만 할 수 있다 (모르는 사람의 신청·스팸 방지)
+// - 친구 신청은 같은 게임에서 만난 사람에게, 또는 상대 아이디를 아는 경우에 할 수 있다
+//   (아이디 신청은 하루 횟수 제한 · 상대가 수락해야 친구)
 // - 1:1 메시지는 친구이거나 최종 매칭된 상대끼리만 주고받는다
 // - 한쪽이라도 차단하면 신청·메시지가 모두 막히고 목록에서 숨는다
 //
@@ -14,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 export const LIMITS = {
   metPerUser: 60, // 함께한 사람 목록 최대 (오래된 것부터 정리)
   pendingOut: 30, // 보낸 친구 신청 최대
+  directPerDay: 20, // 아이디로 보내는 친구 신청 (함께한 적 없는 사람) 하루 최대
   friends: 200,
   messageLen: 500,
   threadKeep: 500, // 대화방마다 보관하는 메시지 수
@@ -36,6 +38,7 @@ export class Relations {
     this.threads = new Map(); // pairKey → [{ id, from, text, at }]
     this.readAt = new Map(); // `${userId}>${pairKey}` → 마지막으로 읽은 시각
     this.lastSent = new Map(); // userId → at (메모리만)
+    this.directSent = new Map(); // userId → [at] 아이디로 보낸 친구 신청 (메모리만)
     this.load();
   }
 
@@ -126,15 +129,27 @@ export class Relations {
   }
 
   // ───────── 친구 ─────────
-  request(from, to) {
+  /**
+   * 친구 신청. 같은 게임에서 만난 사람에게, 또는 상대 아이디를 알고 있으면(direct) 누구에게나.
+   * 아이디 신청은 하루 LIMITS.directPerDay 번까지 (무작위로 아이디를 넣어 보내는 스팸 방지)
+   */
+  request(from, to, { direct = false } = {}) {
     if (from === to) fail('나에게는 신청할 수 없어');
     if (this.isBlocked(from, to)) fail('친구 신청을 보낼 수 없는 상대야');
-    if (!this.hasMet(from, to)) fail('같은 게임에서 만난 사람에게만 신청할 수 있어');
+    if (!direct && !this.hasMet(from, to)) fail('같은 게임에서 만난 사람에게만 신청할 수 있어');
     if (this.areFriends(from, to)) fail('이미 친구야');
     if ((this.friends.get(from)?.size ?? 0) >= LIMITS.friends) fail('친구가 너무 많아');
     // 상대가 이미 나에게 신청했다면 바로 친구가 된다
     if (this.requests.get(from)?.has(to)) return this.respond(from, to, true);
+    if (this.requests.get(to)?.has(from)) return { status: 'requested' };
     if (this.outgoing(from).length >= LIMITS.pendingOut) fail('보낸 신청이 너무 많아. 기다리는 신청을 정리해 줘');
+    if (direct && !this.hasMet(from, to)) {
+      const now = this.now();
+      const sent = (this.directSent.get(from) ?? []).filter((at) => now - at < 24 * 3600 * 1000);
+      if (sent.length >= LIMITS.directPerDay) fail('오늘은 아이디로 친구 신청을 더 보낼 수 없어. 내일 다시 해 줘');
+      sent.push(now);
+      this.directSent.set(from, sent);
+    }
     const m = this.requests.get(to) ?? new Map();
     m.set(from, this.now());
     this.requests.set(to, m);
@@ -205,6 +220,7 @@ export class Relations {
       if (key.startsWith(`${userId}>`) || key.split('>')[1].split('|').includes(userId)) this.readAt.delete(key);
     }
     this.lastSent.delete(userId);
+    this.directSent.delete(userId);
     this.persist();
   }
 
