@@ -147,9 +147,15 @@ export class FileStore {
     return null;
   }
 
+  hasGameRecord(roomId) {
+    return !!this.dir && fs.existsSync(path.join(this.dir, 'games', `${roomId}.json`));
+  }
+
   saveGameRecord(roomId, record) {
     if (!this.dir) return;
-    fs.writeFileSync(path.join(this.dir, 'games', `${roomId}.json`), JSON.stringify(record, null, 1));
+    const file = path.join(this.dir, 'games', `${roomId}.json`);
+    fs.writeFileSync(file + '.tmp', JSON.stringify(record, null, 1));
+    fs.renameSync(file + '.tmp', file);
   }
 }
 

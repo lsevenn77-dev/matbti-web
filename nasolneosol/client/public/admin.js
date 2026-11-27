@@ -65,11 +65,86 @@ for (const b of document.querySelectorAll('#tabs button')) {
   });
 }
 
+const adminServer=$('#managed-server');
+adminServer.addEventListener('change',()=>load());
+const capacityUrl=()=>'/api/admin/capacity?server='+encodeURIComponent(adminServer.value || '1');
+const capacityForm = $('#capacity-form');
+const thresholds = {cpuLimit:'전체 CPU 한계 (%)',coreLimit:'단일 코어 한계 (%)',memoryLimit:'메모리 한계 (%)',
+  latencyIncreasePct:'기존 API p95 허용 증가 (%)',staleSeconds:'측정 만료 (초)',recoverySeconds:'정상 지속 후 해제 (초)',
+  queueTtlSeconds:'대기 예약 만료 (초)',tripSeconds:'위험 지속 후 차단 (초)',recoveryMarginPct:'정상 복귀 여유 (%)',gameLimitMs:'게임 p95 한계 (ms)',
+  minAvailableMiB:'가용 RAM 하한 (MiB, 0이면 수집기 기준)',monthlyBudgetWon:'월 초과비 상한 (원, 0이면 수집기 기준)'};
+for(const [key,label] of Object.entries(thresholds)) {
+  const field=document.createElement('input');field.name=key;field.type='number';field.required=true;
+  field.min=['queueTtlSeconds','staleSeconds'].includes(key)?1:0;
+  const wrapper=document.createElement('label');wrapper.append(label+' ',field);$('#threshold-fields').append(wrapper);
+}
+function renderCapacity(cap) {
+  const h=cap.lastMetrics || {}, m={...cap.workerHost,...cap.metrics,...cap.gameLatency};
+  const fmt=(x,unit='')=>Number.isFinite(x)?x.toLocaleString('ko-KR',{maximumFractionDigits:2})+unit:'미수신';
+  const mib=x=>Number.isFinite(x)?fmt(x/1048576,' MiB'):'미수신';
+  const rows={
+    '입장 상태':cap.status,'제한 사유':cap.reason || '없음','게임 참여 / 예약':cap.playing+' / '+cap.queued,
+    '추가 생성 가능':cap.reason?0:cap.freeRooms,'대기화면 탭 (최근 45초)':fmt(cap.lobbyTabs)+(cap.lobbyCountLimited?' 이상':''),'매칭 전 접속 회원':cap.lobbyAccounts,
+    '서버 소속 연결 / 전체 연결':cap.serverConnections+' / '+cap.connections,
+    '공통 / 게임 프로세스 메모리':mib(cap.processRss)+' / '+mib(cap.workerRss),
+    '게임 호스트 수신':cap.workerHost?.at?new Date(cap.workerHost.at).toLocaleTimeString():'미수신',
+    '보호 지표 수신':cap.lastSample?new Date(cap.lastSample).toLocaleTimeString():'미수신',
+    '전체 CPU / 가장 바쁜 코어':fmt(h.cpuPct,'%')+' / '+fmt(h.corePeakPct,'%'),
+    '코어별 CPU':m.cores?.map(x=>fmt(x,'%')).join(' · ') || '미수신',
+    '가용 RAM / 사용 스왑':mib(m.availableBytes)+' / '+mib(m.swapUsedBytes),
+    '디스크 읽기 / 쓰기':fmt(m.diskReadBps,' B/s')+' / '+fmt(m.diskWriteBps,' B/s'),
+    '디스크 대기시간':fmt(m.diskAwaitMs,' ms'),'네트워크 수신 / 송신':fmt(m.rxBps,' B/s')+' / '+fmt(m.txBps,' B/s'),
+    '기존 서비스 p50 / p95 / p99':[m.apiP50Ms,m.apiP95Ms,m.apiP99Ms].map(x=>fmt(x,' ms')).join(' / '),
+    '기준선 p95 / 현재 배수':fmt(m.baselineP95Ms,' ms')+' / '+fmt(h.p95Ratio,'배'),
+    '기존 API 오류율':fmt(m.apiErrorRate*100,'%'),'게임 p95 / 오류율':fmt(m.gameP95Ms,' ms')+' / '+fmt(m.gameErrorRate*100,'%'),
+    '약정 대역 / 당월 누적':fmt(m.contractMbps,' Mbps')+' / '+fmt(m.monthlyBytes/1e9,' GB'),
+    '예상 초과비 / 월 예산':fmt(m.projectedOverageWon,'원')+' / '+fmt(m.budgetWon,'원')
+  };
+  const detail=$('#capacity-details');detail.replaceChildren();
+  for(const [name,value] of Object.entries(rows)) {
+    const dt=document.createElement('dt'),dd=document.createElement('dd');
+    dt.textContent=name;dd.textContent=value;detail.append(dt,dd);
+  }
+  $('#capacity-audit').replaceChildren(...cap.audit.slice(-20).reverse().map(e=>{
+    const item=document.createElement('li');item.textContent=new Date(e.at).toLocaleString()+' '+e.action+' '+JSON.stringify(e.detail);
+    return item;
+  }));
+}
+async function pollCapacity() {
+  if(!document.hidden && !$('#panel').hidden && $('#capacity-controls').open) {
+    const selected=adminServer.value;
+    try {
+      const cap=await api(capacityUrl());
+      if(selected===adminServer.value) renderCapacity(cap);
+    } catch (err) {$('#capacity-details').textContent=err.message;}
+  }
+  setTimeout(pollCapacity,7000);
+}
+setTimeout(pollCapacity,7000);
+capacityForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const fields = capacityForm.elements;
+  try {
+    await api(capacityUrl(), {...Object.fromEntries(Object.keys(thresholds).map(k=>[k,fields[k].valueAsNumber])),enabled:fields.enabled.checked, maxRooms: fields.maxRooms.valueAsNumber,
+      maxPlayers: fields.maxPlayers.valueAsNumber, maintenance: fields.maintenance.checked, blocked: fields.blocked.checked });
+    await load();
+  } catch (err) { toast(err.message); }
+});
 async function load() {
   try {
     const s = await api('/api/admin/summary');
+    const cap = await api(adminServer.value ? capacityUrl() : '/api/admin/capacity');
+    adminServer.replaceChildren(...cap.ids.map(id=>new Option(id+'서버',id)));
+    adminServer.value=cap.id;
+    $('#capacity-controls').hidden = !cap.managed;
+    if (cap.managed) {
+      const fields = capacityForm.elements;
+      for (const key of ['maxRooms','maxPlayers',...Object.keys(thresholds)]) fields[key].value = cap[key];
+      for (const key of ['maintenance','blocked','enabled']) fields[key].checked = cap[key];
+      renderCapacity(cap);
+    }
     $('#stats').innerHTML = [
-      ['회원', s.users], ['접속 중', s.online], ['대기 중', s.queue], ['진행 중인 방', s.rooms], ['처리할 신고', s.reportsOpen, s.reportsOpen ? 'hot' : ''], ['정지 중', s.banned],
+      ['서버 상태', esc(s.serverStatus)], ['연결 수', s.connections], ['회원', s.users], ['접속 중', s.online], ['대기 중', s.queue], ['진행 중인 방', s.rooms], ['처리할 신고', s.reportsOpen, s.reportsOpen ? 'hot' : ''], ['정지 중', s.banned],
     ].map(([l, v, c]) => `<div class="stat ${c ?? ''}"><b>${v}</b><span>${l}</span></div>`).join('');
     if (tab === 'banned') return renderBanned(await api('/api/admin/banned'));
     renderReports(await api(`/api/admin/reports?status=${tab}`));

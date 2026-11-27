@@ -50,9 +50,26 @@ function safeSet(k, v) {
 const serverNow = () => Date.now() + st.clockOffset;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+const lobbyTabId = globalThis.crypto?.randomUUID?.();
+let presenceTimer;
+let presenceVisible=false;
+function updatePresence() {
+  clearTimeout(presenceTimer);
+  if(!st.info?.managedCapacity || !lobbyTabId) return;
+  const visible=!document.hidden && ['screen-start','screen-signup','screen-lobby'].includes(document.body.dataset.screen);
+  if(visible || presenceVisible) {
+    fetch('/api/lobby-presence',{method:'POST',headers:{'content-type':'application/json'},
+      keepalive:true, body:JSON.stringify({id:lobbyTabId,visible})}).catch(()=>{});
+  }
+  presenceVisible=visible;
+  if(visible) presenceTimer=setTimeout(updatePresence,20000+Math.random()*5000);
+}
+document.addEventListener('visibilitychange',updatePresence);
 function show(id) {
+  const previousScreen=document.body.dataset.screen;
   for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
   document.body.dataset.screen = id; // 상단 바·배경 표시 여부를 CSS 가 정한다
+  if(id!==previousScreen) updatePresence();
   closeModals();
 }
 
@@ -253,7 +270,10 @@ function showLobby(status) {
     $('#q-male-need').textContent = status.need.male;
     $('#q-female-need').textContent = status.need.female;
     $('#btn-queue').innerHTML = status.inQueue ? '<span aria-hidden="true">⏳</span> 대기 취소' : '<span aria-hidden="true">🎮</span> 게임 입장';
+    $('#btn-queue').disabled = !status.inQueue && ['FULL', '점검'].includes(status.serverStatus);
+    if ($('#btn-queue').disabled) $('#btn-queue').textContent = status.serverStatus;
     $('#btn-queue').dataset.in = status.inQueue ? '1' : '';
+    if (!status.inQueue && publicServers.length) paintServerStatus();
     $('#btn-queue').classList.toggle('waiting', !!status.inQueue);
     const mine = p.gender;
     const need = status.need[mine] - status[mine];
@@ -720,6 +740,37 @@ function toastLobby(text) {
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.remove('show'), 2600);
 }
+const serverSelect = $('#game-server');
+let publicServers = [];
+function paintServerStatus() {
+  const button = $('#btn-queue');
+  if (button.dataset.in) return;
+  const choice = publicServers.find(s=>s.id===serverSelect.value);
+  const open = choice && ['원활','보통','혼잡'].includes(choice.status);
+  button.disabled = !open;
+  button.textContent = open ? '게임 입장 · '+choice.status : choice?.status ?? '상태 확인 중';
+  if (!open) $('#queue-msg').textContent = publicServers.some(s=>['원활','보통','혼잡'].includes(s.status))
+    ? '다른 서버를 선택해 줘.' : '지금은 입장 대기 중이야. 자리가 나면 다시 시도해 줘.';
+}
+serverSelect.addEventListener('change',paintServerStatus);
+async function refreshServerStatus() {
+  if (!document.hidden && $('#btn-queue').getClientRects().length) {
+    try {
+      const response=await fetch('/api/server-status',{signal:AbortSignal.timeout(4000)});
+      if(!response.ok) throw new Error();
+      const {servers}=await response.json();
+      const previous=serverSelect.value;
+      publicServers=servers;
+      serverSelect.replaceChildren(...servers.map(s=>new Option(s.id+'서버 · '+s.status,s.id)));
+      if(servers.some(s=>s.id===previous)) serverSelect.value=previous;
+      $('#server-label').hidden=servers.length<2;
+      serverSelect.disabled=!!$('#btn-queue').dataset.in;
+    } catch { publicServers=[]; }
+    paintServerStatus();
+  }
+  setTimeout(refreshServerStatus,5000+Math.random()*4000);
+}
+refreshServerStatus();
 $('#btn-queue').addEventListener('click', () => sendWs({ t: $('#btn-queue').dataset.in ? 'queue.leave' : 'queue.join' }));
 $('#btn-bots').addEventListener('click', async () => {
   if (!$('#btn-queue').dataset.in) sendWs({ t: 'queue.join' });
@@ -916,6 +967,7 @@ function connect() {
 }
 
 function sendWs(m) {
+  if (m.t==='queue.join' && serverSelect.value) m={...m,serverId:serverSelect.value};
   if (st.ws?.readyState === 1) st.ws.send(JSON.stringify(m));
 }
 function act(action) {
@@ -941,10 +993,13 @@ function onMessage(m) {
     st.clockOffset = m.s + rtt / 2 - Date.now();
   } else if (m.t === 'welcome') {
     st.me = m.me;
+  } else if (m.t === 'roomUnavailable') {
+    showLobby();
+    toastLobby(m.error);
   } else if (m.t === 'queueError') {
     $('#queue-msg').textContent = m.error;
     toastLobby(m.error);
-    if (!m.party || /입장권/.test(m.error)) {
+    if (/입장권/.test(m.error)) {
       $('#wallet-box').classList.add('empty');
       $('#wallet-box').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }

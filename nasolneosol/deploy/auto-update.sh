@@ -10,9 +10,18 @@ git fetch -q --depth 1 origin "$BRANCH"
 new=$(git rev-parse FETCH_HEAD)
 cur=$(git rev-parse HEAD)
 [ "$new" = "$cur" ] && exit 0
-active=$( (curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/info" 2>/dev/null || true) | sed -n 's/.*"activeRooms":\([0-9]*\).*/\1/p')
-if [ "${active:-0}" != "0" ]; then
-  echo "새 버전 ${new:0:7} 대기 중 (진행 중인 게임 $active 개)"
+# In managed mode the operator drains all nodes before the updater can proceed.
+# Missing status also defers the update, preserving games that may reconnect.
+if ! info=$(curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/info"); then
+  echo "게임 상태 조회 실패, 업데이트 보류"
+  exit 0
+fi
+if ! node -e '
+  const fs = require("node:fs");
+  const info = JSON.parse(fs.readFileSync(0, "utf8"));
+  process.exit(info.activeRooms === 0 && (info.updateSafe === undefined || info.updateSafe === true) ? 0 : 1);
+' <<< "$info"; then
+  echo "게임 종료 및 점검 완료 대기 중"
   exit 0
 fi
 old_pkg=$(git show HEAD:nasolneosol/package.json 2>/dev/null | md5sum)
