@@ -417,7 +417,74 @@ export class GameScene {
     cap.position.set(x, 2.25, z);
     cap.rotation.y = Math.PI / 4;
     this.scene.add(p, head, cap);
-    (this.lampPosts ??= []).push({ x, z, pole: p, head, cap });
+    const glow = this.lampGlow(x, z, 1.95);
+    (this.lampPosts ??= []).push({ x, z, pole: p, head, cap, ...glow, order: this.lampPosts?.length ?? 0 });
+  }
+
+  /** 가로등 불빛: 등 둘레 번짐(halo) + 바닥에 떨어지는 따뜻한 빛 웅덩이. 실제 조명 대신 가산 합성(모바일 부담 없이) */
+  lampGlow(x, z, y) {
+    this.lampTex ??= {
+      halo: radialTexture('rgba(255,236,190,1)', 'rgba(255,196,110,0.45)'),
+      pool: radialTexture('rgba(255,214,150,0.9)', 'rgba(255,190,110,0.35)'),
+    };
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.lampTex.halo, color: '#ffc77e', transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+    halo.position.set(x, y, z);
+    halo.scale.setScalar(1.9);
+    halo.renderOrder = 6;
+    halo.visible = false;
+    const pool = new THREE.Mesh(
+      new THREE.CircleGeometry(2.6, 40),
+      new THREE.MeshBasicMaterial({ map: this.lampTex.pool, color: '#ffb468', transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+    );
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(x, 0.045, z);
+    pool.renderOrder = 2;
+    pool.visible = false;
+    this.scene.add(halo, pool);
+    return { halo, pool };
+  }
+
+  /** 랜턴 모델(텍스처 한 장)의 유리 부분만 밤에 빛나게: 랜턴 높이대 + 밝은 텍스처 픽셀에만 발광을 더한다 */
+  makeLanternGlow(prop) {
+    this.lampUniform ??= { value: 0 };
+    const u = this.lampUniform;
+    prop.traverse((o) => {
+      if (!o.isMesh) return;
+      o.geometry.computeBoundingBox();
+      const bb = o.geometry.boundingBox;
+      const h = Math.max(1e-4, bb.max.y - bb.min.y);
+      // 등이 있는 높이: 모델 높이의 약 76%~93% 구간
+      const lo = bb.min.y + h * 0.74;
+      const hi = bb.min.y + h * 0.93;
+      o.material.onBeforeCompile = (sh) => {
+        sh.uniforms.uLamp = u;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying float vLampY;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLampY = position.y;');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', `#include <common>\nvarying float vLampY;\nuniform float uLamp;`)
+          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+            float lampBand = smoothstep(${lo.toFixed(4)}, ${(lo + h * 0.04).toFixed(4)}, vLampY) * (1.0 - smoothstep(${(hi - h * 0.03).toFixed(4)}, ${hi.toFixed(4)}, vLampY));
+            float lampLum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+            float lampGlass = lampBand * smoothstep(0.32, 0.62, lampLum) * uLamp;
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.0, 0.82, 0.55), lampGlass);
+            totalEmissiveRadiance += vec3(1.0, 0.66, 0.28) * lampGlass * 2.2;`);
+      };
+      o.material.customProgramCacheKey = () => 'lantern-glow';
+      o.material.needsUpdate = true;
+    });
+  }
+
+  /** 가로등 켜기: 어두워지면 하나씩 차례로 켜지고, 밤에는 은은하게 살짝 일렁인다 */
+  updateLamps(level, t) {
+    if (this.lampUniform) this.lampUniform.value = Math.max(0, Math.min(1, (level - 0.7) / 1.5));
+    for (const l of this.lampPosts ?? []) {
+      const on = Math.max(0, Math.min(1, (level - 0.75 - (l.order % 5) * 0.07) / 1.3));
+      const flick = on > 0 ? 0.96 + 0.04 * Math.sin(t * 2.3 + l.order * 1.7) : 1;
+      l.halo.visible = l.pool.visible = on > 0.01;
+      l.halo.material.opacity = on * 0.8 * flick;
+      l.pool.material.opacity = on * 0.95 * flick;
+    }
   }
 
   buildStream() {
@@ -1042,9 +1109,11 @@ export class GameScene {
         m.position.set(l.x, 0, l.z);
         this.scene.add(m);
         l.pole.visible = l.cap.visible = false;
-        // 밤 불빛: 코드 등(발광)을 랜턴 안쪽으로 옮겨 작게
+        // 밤 불빛: 코드 등(발광)을 랜턴 안쪽으로 옮겨 작게 + 유리 부분 발광, 번짐도 랜턴 높이로
         l.head.scale.setScalar(0.55);
         l.head.position.y = 2.5 * 0.86;
+        l.halo.position.y = 2.5 * 0.86;
+        this.makeLanternGlow(m);
       }
     }
     if (P.planter) {
@@ -1440,6 +1509,7 @@ export class GameScene {
     this.sun.intensity = k.sunI;
     this.sunAngle = k.sunAngle;
     for (const m of this.lampMats ?? []) m.emissiveIntensity = k.lamp;
+    this.lampLevel = k.lamp;
     for (const m of this.windowMats ?? []) m.emissiveIntensity = k.window;
     for (const cl of this.clouds ?? []) cl.children.forEach((c) => (c.material.emissiveIntensity = 0.35 * k.cloud));
   }
@@ -1719,6 +1789,7 @@ export class GameScene {
     this.tod ??= this.todTarget ?? 0.4;
     this.tod += ((this.todTarget ?? 0.4) - this.tod) * Math.min(1, dt * 0.8);
     this.applyTimeOfDay(this.tod);
+    this.updateLamps(this.lampLevel ?? 0, t);
     for (const cl of this.clouds) {
       cl.position.x += dt * 0.6;
       if (cl.position.x > 70) cl.position.x = -70;
