@@ -97,12 +97,27 @@ export class GameScene {
     if (this.mobile) this.renderer.shadowMap.autoUpdate = false;
     let lastFrame = 0;
     this.frameNo = 0;
-    this.renderer.setAnimationLoop((now) => {
+    this.tick = (now) => {
       if (this.mobile && now - lastFrame < 15) return;
       lastFrame = now;
       if (this.mobile && this.frameNo++ % 2 === 0) this.renderer.shadowMap.needsUpdate = true;
       this.frame();
-    });
+    };
+    this.running = false;
+    this.resume();
+  }
+
+  /** 게임 화면을 떠나면 3D 그리기를 멈춘다 (대기 화면 뒤에서 계속 그리면 폰·PC가 매우 느려진다) */
+  pause() {
+    if (!this.running) return;
+    this.running = false;
+    this.renderer.setAnimationLoop(null);
+  }
+  resume() {
+    if (this.running) return;
+    this.running = true;
+    this.clock.getDelta(); // 멈춰 있던 시간만큼 한꺼번에 움직이지 않게
+    this.renderer.setAnimationLoop(this.tick);
   }
 
   /** GLTF 로더 (압축 텍스처 KTX2 지원: 폰 그래픽 메모리·발열 감소) */

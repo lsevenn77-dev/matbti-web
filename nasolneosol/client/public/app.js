@@ -1,5 +1,5 @@
 // 나솔너솔 클라이언트: 화면 전환 · 서버 통신 · 단계별 UI
-import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=29';
+import { GameScene, zoneLabel, timeOfPhase, timeLabel } from './scene.js?v=30';
 import { AudioDirector } from './audio.js?v=28';
 
 const $ = (s) => document.querySelector(s);
@@ -70,6 +70,9 @@ function show(id) {
   const previousScreen=document.body.dataset.screen;
   for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
   document.body.dataset.screen = id; // 상단 바·배경 표시 여부를 CSS 가 정한다
+  // 3D 장면은 게임 화면에서만 그린다 (대기 화면 뒤에서 계속 그리면 매우 느려짐)
+  if (id === 'screen-game') st.scene?.resume();
+  else st.scene?.pause();
   if(id!==previousScreen) updatePresence();
   closeModals();
 }
