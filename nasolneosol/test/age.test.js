@@ -42,10 +42,21 @@ test('가입: 생년월일 필수 · 만 19세 미만 차단 · 성인 확인 �
     // 가입 후 생년월일·나이는 못 바꾼다 (다른 항목은 된다)
     assert.equal((await call(ok.body.token, '/api/me', { age: 22 }, 'PUT')).status, 400);
     assert.equal((await call(ok.body.token, '/api/me', { birthDate: '2000-01-01' }, 'PUT')).status, 400);
-    assert.equal((await call(ok.body.token, '/api/me/birthdate', { birthDate: '2000-01-01', adultConsent: true })).status, 409);
     const edit = await call(ok.body.token, '/api/me', { job: '디자이너' }, 'PUT');
     assert.equal(edit.status, 200);
     assert.equal(edit.body.profile.birthDate, '1995-06-15');
+    // 생년월일은 딱 한 번만 바꿀 수 있다 (동의 필수 · 미성년 날짜 불가 · 바꾼 기록은 남는다)
+    assert.equal(edit.body.birthDateChangeLeft, true);
+    assert.equal((await call(ok.body.token, '/api/me/birthdate', { birthDate: '1996-01-01' })).status, 400);
+    assert.equal((await call(ok.body.token, '/api/me/birthdate', { birthDate: y18, adultConsent: true })).status, 400);
+    const ch = await call(ok.body.token, '/api/me/birthdate', { birthDate: '1996-01-01', adultConsent: true });
+    assert.equal(ch.status, 200);
+    assert.equal(ch.body.profile.birthDate, '1996-01-01');
+    assert.equal(ch.body.birthDateChangeLeft, false);
+    assert.deepEqual(u.birthDateHistory.map((h) => [h.from, h.to]), [['1995-06-15', '1996-01-01']]);
+    const again = await call(ok.body.token, '/api/me/birthdate', { birthDate: '1997-01-01', adultConsent: true });
+    assert.equal(again.status, 409);
+    assert.match(again.body.error, /이미 한 번/);
   } finally {
     app.close();
   }
@@ -73,7 +84,10 @@ test('예전 회원: 생년월일이 없으면 게임 입장 전에 한 번 입�
     assert.equal(r.status, 200);
     assert.equal(r.body.needBirthDate, false);
     assert.equal(r.body.profile.birthDate, '1990-03-03');
-    assert.equal((await call(old.token, '/api/me/birthdate', { birthDate: '1991-03-03', adultConsent: true })).status, 409); // 한 번만
+    // 처음 입력한 뒤에도 한 번은 바꿀 수 있고, 그다음은 안 된다
+    assert.equal(r.body.birthDateChangeLeft, true);
+    assert.equal((await call(old.token, '/api/me/birthdate', { birthDate: '1991-03-03', adultConsent: true })).status, 200);
+    assert.equal((await call(old.token, '/api/me/birthdate', { birthDate: '1992-03-03', adultConsent: true })).status, 409);
   } finally {
     app.close();
   }

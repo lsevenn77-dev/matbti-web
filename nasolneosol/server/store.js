@@ -225,7 +225,7 @@ export function validateHandle(input) {
 }
 
 // ── 생년월일 (연령 확인) ──
-// 만 나이는 한국 시간 기준 오늘 날짜로 계산한다. 생년월일은 가입 후 바꿀 수 없다 (본인인증을 붙이면 그 결과로 덮어쓴다).
+// 만 나이는 한국 시간 기준 오늘 날짜로 계산한다. 생년월일은 가입 후 딱 한 번만 바꿀 수 있다 (본인인증을 붙이면 그 결과로 덮어쓴다).
 export const ADULT_CONSENT_TEXT = '본인은 만 19세 이상이며, 입력한 생년월일이 사실임을 확인합니다. 미성년자의 이용 및 허위 정보 등록이 확인될 경우 서비스 이용이 제한될 수 있습니다.';
 
 /** 'YYYY-MM-DD' → 만 나이 (한국 시간 기준) */
@@ -271,7 +271,7 @@ export function validateProfile(input, { minAge, partial = false }) {
     // 가입: 생년월일 필수, 나이는 생년월일로 계산
     Object.assign(out, validateBirthDate(input.birthDate, { minAge }));
   } else if (input.age != null || input.birthDate != null) {
-    throw new Error('나이·생년월일은 가입 후 바꿀 수 없어. 잘못 입력했다면 고객센터로 알려 줘');
+    throw new Error('나이·생년월일은 여기서 바꿀 수 없어. 프로필 수정의 "생년월일 바꾸기"(딱 한 번)를 이용해 줘');
   }
   // 만나고 싶은 상대 나이: 내 나이보다 위로·아래로 몇 살까지 (0~40, 40 = 사실상 상관없음)
   for (const [k, label] of [['ageUp', '위로'], ['ageDown', '아래로']]) {

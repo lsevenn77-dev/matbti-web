@@ -1,5 +1,5 @@
 // 서비스 워커: 버전별 정적 파일 캐시. API·사진·게임 연결은 캐시하지 않는다.
-const VERSION = 'nsns-proto-0.9.33';
+const VERSION = 'nsns-proto-0.9.34';
 const ASSETS = ['/', '/index.html', '/style.css', '/app.js', '/scene.js', '/audio.js', '/manifest.webmanifest',
   '/icons/icon-192.png', '/icons/icon-512.png', '/vendor/three/three.module.js', '/vendor/three/three.core.js',
   '/vendor/three-addons/loaders/GLTFLoader.js', '/vendor/three-addons/utils/BufferGeometryUtils.js', '/vendor/three-addons/utils/SkeletonUtils.js'];

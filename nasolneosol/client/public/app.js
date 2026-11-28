@@ -139,6 +139,7 @@ function showSignup(editing = false) {
   $('#pf-ok').hidden = !st.signupTicket || editing;
   f.handle.value = editing ? st.me?.handle ?? '' : f.handle.value;
   setHandleHint('');
+  birthChanging = false;
   setupBirthField(editing);
   if (editing && st.me) {
     f.job.value = st.me.profile.job;
@@ -171,27 +172,42 @@ function maxBirthDate() {
   const md = `${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
   return md === '02-29' && !(y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? `${y}-02-28` : `${y}-${md}`;
 }
-/** 가입: 입력 / 수정: 이미 있으면 잠금 표시, 예전 회원이라 없으면 한 번 입력 */
+/** 생년월일: 가입 때 입력 → 그 뒤 딱 한 번만 바꿀 수 있다 (바꾸는 중이면 true) */
+let birthChanging = false;
+const BIRTH_ONCE_WARN = '⚠️ 생년월일은 딱 한 번만 바꿀 수 있어. 바꾼 뒤에는 다시 바꿀 수 없으니 정확한지 꼭 확인해 줘.';
+/** 가입: 입력 / 수정: 이미 있으면 잠금 표시(+ 1회 바꾸기 버튼), 예전 회원이라 없으면 처음 입력 */
 function setupBirthField(editing) {
   const f = $('#signup-form');
-  const locked = editing && st.me?.profile?.birthDate;
+  if (!editing) birthChanging = false;
+  const has = editing && !!st.me?.profile?.birthDate;
+  const locked = has && !birthChanging;
   f.birthDate.max = maxBirthDate();
-  f.birthDate.hidden = !!locked;
+  f.birthDate.hidden = locked;
   f.birthDate.required = !locked;
-  $('#birth-locked').hidden = !locked;
-  if (locked) $('#birth-locked').textContent = `${st.me.profile.birthDate} · 만 ${st.me.profile.age}세 (바꾸려면 고객센터로 알려 줘)`;
-  else if (editing) f.birthDate.value = '';
-  $('#adult-consent-row').hidden = !!locked;
+  const box = $('#birth-locked');
+  box.hidden = !has;
+  if (has) {
+    const left = st.me.birthDateChangeLeft;
+    box.innerHTML = `${esc(st.me.profile.birthDate)} · 만 ${st.me.profile.age}세 ${
+      birthChanging ? '<button type="button" class="birth-btn" id="btn-birth-cancel">바꾸지 않기</button>'
+      : left ? '<button type="button" class="birth-btn" id="btn-birth-change">생년월일 바꾸기 (1회)</button>'
+      : '<span class="tiny muted">이미 한 번 바꿨어 · 잘못됐다면 고객센터로 알려 줘</span>'}`;
+    $('#btn-birth-change')?.addEventListener('click', (e) => { e.preventDefault(); birthChanging = true; setupBirthField(true); f.birthDate.value = st.me.profile.birthDate; f.birthDate.focus(); });
+    $('#btn-birth-cancel')?.addEventListener('click', (e) => { e.preventDefault(); birthChanging = false; setupBirthField(true); });
+  }
+  if (editing && !birthChanging) f.birthDate.value = '';
+  $('#adult-consent-row').hidden = locked;
   f.adultConsent.checked = false;
   f.adultConsent.required = !locked;
-  $('#birth-hint').textContent = !locked && editing ? '게임에 들어가려면 생년월일을 한 번 입력해 줘.' : '';
-  $('#birth-hint').className = 'tiny';
+  const hint = $('#birth-hint');
+  hint.textContent = birthChanging ? BIRTH_ONCE_WARN : !has && editing ? '게임에 들어가려면 생년월일을 입력해 줘. 입력한 뒤에는 딱 한 번만 바꿀 수 있어.' : !editing ? '가입한 뒤에는 딱 한 번만 바꿀 수 있으니 정확하게 입력해 줘.' : '';
+  hint.className = `tiny ${birthChanging ? 'bad' : ''}`;
 }
 $('#signup-form').birthDate.addEventListener('change', (e) => {
   const a = ageFromBirth(e.target.value);
   const el = $('#birth-hint');
   if (a == null) { el.textContent = ''; return; }
-  el.textContent = a < MIN_AGE() ? `만 ${MIN_AGE()}세 이상만 가입할 수 있어` : `만 ${a}세`;
+  el.textContent = a < MIN_AGE() ? `만 ${MIN_AGE()}세 이상만 이용할 수 있어` : `만 ${a}세 · 한 번만 바꿀 수 있으니 정확한지 확인해 줘`;
   el.className = `tiny ${a < MIN_AGE() ? 'bad' : 'ok'}`;
 });
 
@@ -297,8 +313,9 @@ $('#signup-form').addEventListener('submit', async (e) => {
   const f = e.target;
   const editing = f.dataset.editing === '1';
   const body = { gender: f.gender.value, job: f.job.value, region: f.region.value, ageUp: Number(f.ageUp.value), ageDown: Number(f.ageDown.value) };
-  // 생년월일: 가입할 때(또는 예전 회원이 처음 입력할 때)만. 화면에서도 만 19세 미만은 막는다
-  const needBirth = !editing || !st.me?.profile?.birthDate;
+  // 생년월일: 가입·예전 회원 처음 입력·1회 바꾸기. 화면에서도 만 19세 미만은 막는다
+  const changingBirth = editing && birthChanging && !!st.me?.profile?.birthDate && f.birthDate.value !== st.me.profile.birthDate;
+  const needBirth = !editing || !st.me?.profile?.birthDate || changingBirth;
   if (needBirth) {
     const a = ageFromBirth(f.birthDate.value);
     if (a == null) return ($('#signup-error').textContent = '생년월일을 입력해 줘');
@@ -311,10 +328,12 @@ $('#signup-form').addEventListener('submit', async (e) => {
   if (!editing && !photoData) return ($('#signup-error').textContent = '프로필 사진을 선택해 줘');
   const handle = f.handle.value.trim().toLowerCase();
   if (!editing) body.handle = handle;
-  // 수정: 예전 회원이 생년월일을 처음 입력
+  // 수정: 예전 회원이 생년월일을 처음 입력하거나, 딱 한 번 바꾸기
   if (editing && needBirth) {
+    if (changingBirth && !confirm(`생년월일을 ${f.birthDate.value}(으)로 바꿀까?\n\n생년월일은 딱 한 번만 바꿀 수 있어. 지금 바꾸면 다시는 바꿀 수 없어.`)) return;
     try {
       st.me = await api('/api/me/birthdate', { birthDate: f.birthDate.value, adultConsent: true });
+      birthChanging = false;
     } catch (err) {
       return ($('#signup-error').textContent = err.message);
     }

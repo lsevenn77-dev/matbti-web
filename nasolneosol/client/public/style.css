@@ -603,6 +603,7 @@ body[data-screen="screen-start"] .topbar { background: transparent; border: 0; b
 .birth-field input[hidden] { display: none; }
 .birth-locked { display: block; margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: #f8eef2; color: var(--plum); font-weight: 700; }
 .birth-locked[hidden] { display: none; }
+.birth-btn { margin-left: 6px; border: 1px solid var(--pk); background: #fff; color: var(--pk); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
 .adult-consent { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid #f0cfdc; border-radius: 12px; background: #fff7fa; font-size: 12.5px; line-height: 1.5; color: var(--plum); font-weight: 500; cursor: pointer; }
 .adult-consent[hidden] { display: none !important; }
 form .adult-consent input[type=checkbox] { display: inline-block; width: 18px; height: 18px; padding: 0; margin: 1px 0 0; flex: none; accent-color: var(--pk); }

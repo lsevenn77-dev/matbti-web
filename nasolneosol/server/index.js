@@ -464,6 +464,7 @@ export function createServer(opts = {}) {
       online: isOnline(u.id), inGame: userRoom.has(u.id), ban: banOf(u), reportsAgainst: reports.countAgainst(u.id),
       handle: u.handle ?? null, leave: leaveState(u),
       birthDate: p.birthDate ?? null, adultConsentAt: u.adultConsentAt ?? null, sanctions: u.sanctions ?? [],
+      birthDateHistory: u.birthDateHistory ?? [],
       reportsMade: reports.list.filter((r) => r.reporter === u.id).length,
       reportsMadeDismissed: reports.list.filter((r) => r.reporter === u.id && r.status === 'dismissed').length,
     };
@@ -794,6 +795,7 @@ export function createServer(opts = {}) {
       handle: u.handle ?? null,
       profile: u.profile,
       needBirthDate: needsBirthDate(u),
+      birthDateChangeLeft: !!u.profile?.birthDate && !u.birthDateChangedAt,
       leave: leaveState(u),
       inRoom: userRoom.has(u.id),
       wallet: entryStatus(u),
@@ -923,16 +925,27 @@ export function createServer(opts = {}) {
         broadcastQueue();
         return json(res, 200, meResponse(u));
       }
-      // ── 생년월일 (예전에 가입해 생년월일이 없는 회원이 한 번만 입력) ──
+      // ── 생년월일 ──
+      // 예전에 가입해 생년월일이 없는 회원은 처음 입력, 이미 있는 회원은 딱 한 번만 바꿀 수 있다 (그 뒤로는 고객센터)
       if (p === '/api/me/birthdate' && req.method === 'POST') {
         const u = authUser(req);
         if (!u) return json(res, 401, { error: '로그인이 필요하다' });
-        if (u.profile.birthDate) return json(res, 409, { error: '생년월일은 이미 입력했어. 잘못 입력했다면 고객센터로 알려 줘' });
+        const changing = !!u.profile.birthDate;
+        if (changing && u.birthDateChangedAt) return json(res, 409, { error: '생년월일은 이미 한 번 바꿔서 더 바꿀 수 없어. 잘못됐다면 고객센터로 알려 줘' });
+        if (userRoom.has(u.id)) return json(res, 409, { error: '게임 중에는 바꿀 수 없어' });
         const body = await readBody(req, 2 * 1024);
         if (body.adultConsent !== true) return json(res, 400, { error: '만 19세 이상 확인에 동의해 줘' });
         const b = validateBirthDate(body.birthDate, { minAge: config.minAge });
+        if (changing && b.birthDate === u.profile.birthDate) return json(res, 400, { error: '지금과 같은 생년월일이야' });
+        const from = u.profile.birthDate ?? null;
         store.updateProfile(u.id, b);
         u.adultConsentAt = Date.now();
+        if (changing) {
+          u.birthDateChangedAt = Date.now();
+          // 운영자가 볼 수 있게 바꾼 기록을 남긴다
+          u.birthDateHistory = [...(u.birthDateHistory ?? []), { at: u.birthDateChangedAt, from, to: b.birthDate }];
+          if (inQueue(u.id)) leaveQueue(u.id); // 나이 조건이 바뀌므로 대기열을 다시
+        }
         store.persist();
         tryFormRoom();
         return json(res, 200, meResponse(u));
