@@ -6,7 +6,7 @@ async function setup() {
   const app = createServer({ dataDir: null, env: { DEV_TOOLS: '0' } });
   const port = await app.listen(0);
   const base = `http://127.0.0.1:${port}`;
-  const mk = (gender, age) => app.store.createUser({ gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
+  const mk = (gender, age) => app.store.createUser({ birthDate: '1995-06-15', gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
   const call = async (u, path, body) => {
     const r = await fetch(base + path, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${u.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     return { status: r.status, body: await r.json() };

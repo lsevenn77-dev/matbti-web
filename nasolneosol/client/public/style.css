@@ -597,6 +597,16 @@ body[data-screen="screen-start"] .topbar { background: transparent; border: 0; b
 .handle-in i { font-style: normal; font-weight: 800; color: var(--pk); }
 .handle-in input { border: 0 !important; outline: 0; box-shadow: none !important; background: transparent; padding: 10px 2px !important; margin: 0 !important; flex: 1; min-width: 0; font: inherit; }
 .handle-field small { display: block; margin-top: 4px; color: var(--plum-2); font-weight: 500; }
+.birth-field small { display: block; margin-top: 4px; font-weight: 600; }
+.birth-field small.ok { color: #2e9b55; }
+.birth-field small.bad { color: #d64545; }
+.birth-field input[hidden] { display: none; }
+.birth-locked { display: block; margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: #f8eef2; color: var(--plum); font-weight: 700; }
+.birth-locked[hidden] { display: none; }
+.adult-consent { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid #f0cfdc; border-radius: 12px; background: #fff7fa; font-size: 12.5px; line-height: 1.5; color: var(--plum); font-weight: 500; cursor: pointer; }
+.adult-consent[hidden] { display: none !important; }
+form .adult-consent input[type=checkbox] { display: inline-block; width: 18px; height: 18px; padding: 0; margin: 1px 0 0; flex: none; accent-color: var(--pk); }
+.adult-consent span { flex: 1; min-width: 0; }
 .handle-field small.ok, .add-friend .ok { color: #2e9b55; }
 .handle-field small.bad, .add-friend .bad { color: #d64545; }
 .add-friend { display: flex; flex-direction: column; gap: 12px; padding-top: 2px; }

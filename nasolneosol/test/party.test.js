@@ -40,7 +40,7 @@ test('일행 중 한 명이라도 나이 조건이 안 맞으면 일행 전체�
 test('WS: 동반 입장한 두 사람은 봇을 채워 시작한 같은 방에 들어간다', async () => {
   const app = createServer({ dataDir: null, env: { DEV_TOOLS: '1' } });
   const port = await app.listen(0);
-  const mk = (gender, age) => app.store.createUser({ gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
+  const mk = (gender, age) => app.store.createUser({ birthDate: '1995-06-15', gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
   const a = mk('male', 30);
   const b = mk('male', 31);
   const early = mk('male', 33); // 일행보다 먼저 와서 기다리는 남자 1명
@@ -83,15 +83,15 @@ test('WS: 동반 입장한 두 사람은 봇을 채워 시작한 같은 방에 �
 test('WS: 같은 성별 친구 초대 → 수락 → 함께 대기 → 한 명이 취소하면 둘 다 빠짐', async () => {
   const app = createServer({ dataDir: null, env: { DEV_TOOLS: '0' } });
   const port = await app.listen(0);
-  const mk = (gender, age) => app.store.createUser({ gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
+  const mk = (gender, age) => app.store.createUser({ birthDate: '1995-06-15', gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
   const a = mk('male', 30);
   const b = mk('male', 31);
   const f = mk('female', 29);
   app.rel.recordGame({ roomId: 'r', people: [a, b, f].map((u) => ({ userId: u.id, alias: u.id.slice(0, 4) })), couples: [] });
-  for (const [x, y] of [[a, b], [a, f]]) {
-    app.rel.request(x.id, y.id);
-    app.rel.respond(y.id, x.id, true);
-  }
+  app.rel.request(a.id, b.id);
+  app.rel.respond(b.id, a.id, true);
+  // 친구는 같은 성별끼리만
+  assert.throws(() => app.rel.request(a.id, f.id), /같은 성별/);
   const open = (u) => new Promise((res) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     ws.msgs = [];
@@ -108,7 +108,7 @@ test('WS: 같은 성별 친구 초대 → 수락 → 함께 대기 → 한 명�
     // 이성 친구는 초대 불가
     wa.send(JSON.stringify({ t: 'party.invite', to: f.id }));
     await wait();
-    assert.match(last(wa, 'partyNote').text, /이성/);
+    assert.match(last(wa, 'partyNote').text, /이성|친구/);
     assert.equal(last(wf, 'party').invite, null);
     // 같은 성별 친구 초대 → 수락
     wa.send(JSON.stringify({ t: 'party.invite', to: b.id }));

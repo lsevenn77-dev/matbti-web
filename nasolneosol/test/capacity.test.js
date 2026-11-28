@@ -64,7 +64,7 @@ test(
       }
       assert.equal((await api('capacity')).status, '원활');
       const people = Array.from({ length: 14 }, (_, i) =>
-        app.store.createUser({
+        app.store.createUser({ birthDate: '1995-06-15',
           gender: i % 2 ? 'female' : 'male',
           age: 30,
           job: 'test',

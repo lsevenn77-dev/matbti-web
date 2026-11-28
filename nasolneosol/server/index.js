@@ -19,7 +19,7 @@ import { RoomWorker } from './room-worker-client.js';
 import { makeGate } from './capacity.js';
 import { Room } from './room.js';
 import { MockVoiceAdapter } from './voice.js';
-import { FileStore, decodeDataUrl, validateProfile } from './store.js';
+import { FileStore, decodeDataUrl, validateProfile, validateBirthDate, refreshAge, ADULT_CONSENT_TEXT } from './store.js';
 import { BotDriver, botProfile, botPhotoSvg } from './bots.js';
 import { formGroup, needFor } from './matcher.js';
 import { PRODUCTS, entryStatus, canEnter, consumeEntry, refundEntry, grantProduct } from './wallet.js';
@@ -44,7 +44,8 @@ export function createServer(opts = {}) {
   const config = makeConfig(PRESETS[env.PRESET] ?? {}, env.VOTER ? { firstVote: { voterGender: env.VOTER } } : {}, opts.config ?? {});
   const store = new FileStore(opts.dataDir === null ? null : path.resolve(env.DATA_DIR || path.join(ROOT, 'data')));
   const voice = new MockVoiceAdapter({ log: env.VOICE_LOG === '1' });
-  const relations = new Relations(store.dir);
+  // 친구는 같은 성별끼리만 (이성은 최종 매칭돼야 대화). 성별을 바꾸면 그때부터 다시 판단한다
+  const relations = new Relations(store.dir, { canFriend: (a, b) => { const x = store.get(a); const y = store.get(b); return !!x && !!y && x.profile.gender === y.profile.gender; } });
   const reports = new Reports(store.dir);
   reports.purgeOld(); // 처리 완료 후 1년 지난 신고 기록 정리
 
@@ -192,6 +193,8 @@ export function createServer(opts = {}) {
     if (!gates.has(serverId)) return send(user.id,{t:"queueError",error:"서버를 다시 선택해 줘"});
     if (userRoom.has(user.id) || queue.some((q) => q.userId === user.id)) return;
     const party = partyOf(user.id);
+    if (needsBirthDate(user)) return send(user.id, { t: 'queueError', error: BIRTH_MSG, needBirthDate: true });
+    refreshAge(user);
     if (party) return joinQueueParty(user, party, serverId);
     const blocked = leaveBlockMsg(user);
     if (blocked) return send(user.id, { t: 'queueError', error: blocked });
@@ -213,6 +216,8 @@ export function createServer(opts = {}) {
       if (userRoom.has(id)) return err('함께 입장하는 친구가 아직 게임 중이야');
       if (!u.isBot && !isOnline(id)) return err('함께 입장하는 친구가 접속해 있지 않아');
       if (queue.some(q => q.userId === id && (q.serverId !== serverId || q.partyId !== party.id))) return err('함께 입장하는 친구가 다른 대기열에 있어');
+      if (needsBirthDate(u)) return err(id === user.id ? BIRTH_MSG : '함께 입장하는 친구가 아직 생년월일을 입력하지 않았어');
+      refreshAge(u);
       const blocked = leaveBlockMsg(u, id === user.id ? '' : '함께 입장하는 친구가 ');
       if (blocked) return err(blocked);
       if (!canEnter(u)) return err(`${who} 남은 입장권이 없어`);
@@ -458,6 +463,9 @@ export function createServer(opts = {}) {
       createdAt: u.createdAt, linked: (u.identities ?? []).map((k) => k.split(':')[0]), isBot: !!u.isBot,
       online: isOnline(u.id), inGame: userRoom.has(u.id), ban: banOf(u), reportsAgainst: reports.countAgainst(u.id),
       handle: u.handle ?? null, leave: leaveState(u),
+      birthDate: p.birthDate ?? null, adultConsentAt: u.adultConsentAt ?? null, sanctions: u.sanctions ?? [],
+      reportsMade: reports.list.filter((r) => r.reporter === u.id).length,
+      reportsMadeDismissed: reports.list.filter((r) => r.reporter === u.id && r.status === 'dismissed').length,
     };
   }
   async function handleAdmin(req, res, p, url) {
@@ -534,14 +542,17 @@ export function createServer(opts = {}) {
       if (p === '/api/admin/ban') {
         const days = body.days === null || body.days === 0 ? null : Number(body.days);
         if (days !== null && !(days > 0 && days <= 3650)) return json(res, 400, { error: '정지 기간이 이상해' });
-        const ban = applyBan(String(body.userId ?? ''), { days, reason: body.reason });
-        if (body.reportId) reports.update(String(body.reportId), { status: 'resolved', note: body.note ?? undefined, action: `정지 ${days ? `${days}일` : '영구'}` });
+        // 신고 처리에서 정지: 신고 대상(기본) 또는 허위 신고를 한 신고자(about: 'reporter')
+        const about = body.about === 'reporter' ? 'reporter' : 'target';
+        const ban = applyBan(String(body.userId ?? ''), { days, reason: body.reason, reportId: body.reportId ? String(body.reportId) : null, about });
+        if (body.reportId) reports.update(String(body.reportId), { status: about === 'reporter' ? 'dismissed' : 'resolved', note: body.note ?? undefined, action: `${about === 'reporter' ? '허위 신고로 신고자 ' : ''}정지 ${days ? `${days}일` : '영구'}` });
         return json(res, 200, { ok: true, ban });
       }
       if (p === '/api/admin/unban') {
         const u = store.get(String(body.userId ?? ''));
         if (!u) return json(res, 404, { error: '회원을 찾을 수 없어' });
         delete u.ban;
+        u.sanctions = [...(u.sanctions ?? []), { at: Date.now(), action: 'unban' }].slice(-50);
         store.persist();
         console.log(`[ban] 해제 ${u.id.slice(0, 8)}`);
         return json(res, 200, { ok: true });
@@ -595,12 +606,14 @@ export function createServer(opts = {}) {
   function socialSummary(me) {
     const card = (id) => personCard(me, id);
     const keep = (x) => x.filter((c) => c && !relations.isBlocked(me, c.id));
-    const friends = keep([...(relations.friends.get(me) ?? [])].map(card)).sort((a, b) => Number(b.online) - Number(a.online));
-    const out = relations.outgoing(me);
+    // 친구·신청은 같은 성별끼리만 보인다 (예전에 맺은 이성 친구는 목록에서 빠지고 대화도 막힌다. 매칭 상대는 나의 인연에서)
+    const same = (id) => relations.canFriend(me, id);
+    const friends = keep([...(relations.friends.get(me) ?? [])].filter(same).map(card)).sort((a, b) => Number(b.online) - Number(a.online));
+    const out = relations.outgoing(me).filter((r) => same(r.userId));
     const outgoing = new Set(out.map((r) => r.userId));
-    const incoming = keep(relations.incoming(me).map((r) => card(r.userId) && { ...card(r.userId), at: r.at }));
+    const incoming = keep(relations.incoming(me).filter((r) => same(r.userId)).map((r) => card(r.userId) && { ...card(r.userId), at: r.at }));
     const sent = keep(out.map((r) => card(r.userId) && { ...card(r.userId), at: r.at }));
-    const met = keep([...(relations.met.get(me) ?? [])].reverse().map(([id, m]) => card(id) && { ...card(id), at: m.at, friend: relations.areFriends(me, id), requested: outgoing.has(id) }));
+    const met = keep([...(relations.met.get(me) ?? [])].reverse().map(([id, m]) => card(id) && { ...card(id), at: m.at, friend: relations.areFriends(me, id) && same(id), requested: outgoing.has(id), canFriend: same(id), matched: relations.isMatched(me, id) }));
     const matches = (relations.matches.get(me) ?? []).filter((m) => !relations.isBlocked(me, m.partnerId)).map((m) => card(m.partnerId) && { ...card(m.partnerId), at: m.at, roomId: m.roomId }).filter(Boolean);
     const threads = relations.threadsOf(me).map((t) => card(t.userId) && { ...card(t.userId), last: { text: t.last.text, at: t.last.at, mine: t.last.from === me }, unread: t.unread }).filter(Boolean);
     return { friends, incoming, sent, met, matches, threads, unread: threads.reduce((n, t) => n + t.unread, 0) };
@@ -751,10 +764,12 @@ export function createServer(opts = {}) {
   }
 
   const banBody = (b) => ({ error: '이용이 정지된 계정이야', banned: { reason: b.reason, until: b.until } });
-  function applyBan(userId, { days, reason }) {
+  function applyBan(userId, { days, reason, reportId = null, about = null }) {
     const u = store.get(userId);
     if (!u) throw new Error('회원을 찾을 수 없어');
     u.ban = { reason: String(reason ?? '').slice(0, 200) || '운영 정책 위반', until: days ? Date.now() + days * 24 * 3600 * 1000 : null, at: Date.now() };
+    // 제재 이력은 정지가 끝나도 남긴다
+    u.sanctions = [...(u.sanctions ?? []), { at: u.ban.at, action: 'ban', days: days ?? null, reason: u.ban.reason, reportId, about }].slice(-50);
     store.persist();
     leaveQueue(userId);
     leaveParty(userId);
@@ -768,11 +783,17 @@ export function createServer(opts = {}) {
     return u.ban;
   }
 
+  // ── 연령 확인 (생년월일 + 성인 확인 동의) ──
+  const BIRTH_MSG = '게임에 들어가려면 먼저 생년월일을 입력하고 만 19세 이상임을 확인해 줘';
+  const needsBirthDate = (u) => !!u && !u.isBot && !u.profile?.birthDate;
+
   function meResponse(u) {
+    refreshAge(u);
     return {
       id: u.id,
       handle: u.handle ?? null,
       profile: u.profile,
+      needBirthDate: needsBirthDate(u),
       leave: leaveState(u),
       inRoom: userRoom.has(u.id),
       wallet: entryStatus(u),
@@ -856,6 +877,7 @@ export function createServer(opts = {}) {
       if (p === '/api/signup' && req.method === 'POST') {
         const body = await readBody(req);
         const profile = validateProfile(body, { minAge: config.minAge });
+        if (body.adultConsent !== true) return json(res, 400, { error: '만 19세 이상 확인에 동의해 줘' });
         // 아이디: 가입 화면에서 받는다 (안 보내면 나중에 친구 화면에서 정한다)
         const handle = body.handle != null && body.handle !== '' ? store.checkHandle(body.handle) : null;
         // 간편 로그인으로 시작한 경우 그 계정에 연결
@@ -870,6 +892,8 @@ export function createServer(opts = {}) {
         const { buf, mime } = decodeDataUrl(body.photo);
         profile.photoUrl = store.savePhoto(buf, mime);
         const u = store.createUser(profile);
+        u.adultConsentAt = Date.now();
+        store.persist();
         if (handle) {
           try { store.setHandle(u.id, handle); } catch {} // 그 사이 누가 먼저 가져간 경우: 나중에 다시 정한다
         }
@@ -897,6 +921,20 @@ export function createServer(opts = {}) {
         // 나이 조건이 바뀌면 대기열 매칭을 다시 본다
         tryFormRoom();
         broadcastQueue();
+        return json(res, 200, meResponse(u));
+      }
+      // ── 생년월일 (예전에 가입해 생년월일이 없는 회원이 한 번만 입력) ──
+      if (p === '/api/me/birthdate' && req.method === 'POST') {
+        const u = authUser(req);
+        if (!u) return json(res, 401, { error: '로그인이 필요하다' });
+        if (u.profile.birthDate) return json(res, 409, { error: '생년월일은 이미 입력했어. 잘못 입력했다면 고객센터로 알려 줘' });
+        const body = await readBody(req, 2 * 1024);
+        if (body.adultConsent !== true) return json(res, 400, { error: '만 19세 이상 확인에 동의해 줘' });
+        const b = validateBirthDate(body.birthDate, { minAge: config.minAge });
+        store.updateProfile(u.id, b);
+        u.adultConsentAt = Date.now();
+        store.persist();
+        tryFormRoom();
         return json(res, 200, meResponse(u));
       }
       // ── 아이디 ──
@@ -934,7 +972,8 @@ export function createServer(opts = {}) {
         const incoming = relations.incoming(u.id).some((r) => r.userId === t.id);
         return json(res, 200, {
           id: t.id, handle: t.handle, gender: t.profile.gender, photoUrl: t.profile.photoUrl,
-          self: t.id === u.id, friend: relations.areFriends(u.id, t.id), requested: outgoing, incoming,
+          self: t.id === u.id, friend: relations.areFriends(u.id, t.id) && relations.canFriend(u.id, t.id), requested: outgoing, incoming,
+          canFriend: t.id === u.id || relations.canFriend(u.id, t.id),
         });
       }
       // ── 신고 ──
@@ -1168,6 +1207,7 @@ export function createServer(opts = {}) {
           dateRounds: config.randomDate.enabled ? 4 : 3,
           slots: config.slots,
           minAge: config.minAge,
+          adultConsentText: ADULT_CONSENT_TEXT,
           voice: 'mock',
           auth: {
             google: social.googleClientIds[0] ?? null,

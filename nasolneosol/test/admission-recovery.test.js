@@ -12,7 +12,7 @@ test('interrupted admissions are reconciled once across two restarts', (t) => {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new FileStore(dir);
   const users = ['r123', 'r124'].map((roomId) => {
-    const user = store.createUser({ gender: 'female', age: 30, job: 'fixture', region: 'fixture' });
+    const user = store.createUser({ birthDate: '1995-06-15', gender: 'female', age: 30, job: 'fixture', region: 'fixture' });
     user.pendingGameEntry = { roomId, kind: consumeEntry(user) };
     return user.id;
   });

@@ -58,7 +58,7 @@ test(
         await until(async () => (await api('capacity', id)).status === '원활');
       }
       for (let i = 0; i < 24; i++) {
-        const user = app.store.createUser({
+        const user = app.store.createUser({ birthDate: '1995-06-15',
           age: 30,
           gender: i % 2 ? 'female' : 'male',
           job: 'fixture',

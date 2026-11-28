@@ -175,7 +175,8 @@ function person(c, label) {
     <img src="${esc(c.photoUrl)}" alt="" loading="lazy" />
     <div>
       <span class="who">${label}</span>
-      <div class="line"><b>${G[c.gender] ?? ''} · ${c.age}세</b> · ${esc(c.job)} · ${esc(c.region)} ${flags}${ban}</div>
+      <div class="line"><b>${G[c.gender] ?? ''} · ${c.age}세</b> <span class="muted">(생년월일 ${c.birthDate ? esc(c.birthDate) : '<b class="redtxt">미입력</b>'}${c.adultConsentAt ? ` · 성인 확인 동의 ${when(c.adultConsentAt)}` : ''})</span> · ${esc(c.job)} · ${esc(c.region)} ${flags}${ban}</div>
+      ${c.sanctions?.length || c.reportsMade ? `<div class="line muted">제재 이력 ${c.sanctions?.filter((x) => x.action === 'ban').length ?? 0}회${c.sanctions?.length ? ` (${c.sanctions.slice(-3).map((x) => `${when(x.at)} ${x.action === 'ban' ? `${x.days ? `${x.days}일` : '영구'} 정지${x.about === 'reporter' ? '·허위 신고' : ''}` : '해제'}`).join(', ')})` : ''} · 보낸 신고 ${c.reportsMade ?? 0}건${c.reportsMadeDismissed ? ` (기각 <b class="${c.reportsMadeDismissed >= 3 ? 'redtxt' : ''}">${c.reportsMadeDismissed}</b>)` : ''}</div>` : ''}
       <div class="line muted">가입 ${when(c.createdAt)} · 로그인 ${c.linked.length ? esc(c.linked.join(', ')) : '없음'} · 받은 신고 <b class="${c.reportsAgainst >= 3 ? 'redtxt' : ''}">${c.reportsAgainst}건</b>${c.leave?.count ? ` · 무단 이탈 <b class="${c.leave.count >= 2 ? 'redtxt' : ''}">${c.leave.count}회</b>${c.leave.blockedUntil ? ` (~${when(c.leave.blockedUntil)} 입장 제한)` : ''} <button type="button" class="ghost tiny-btn" data-clear-leave="${esc(c.id)}">이탈 기록 지우기</button>` : ''}${c.handle ? ` · @${esc(c.handle)}` : ''} · <code>${esc(c.id.slice(0, 8))}</code></div>
     </div>
   </div>`;
@@ -216,6 +217,7 @@ function renderReports(list) {
         </select>
         <input class="reason-in" placeholder="정지 사유 (대상에게 보여요)" maxlength="200" value="${esc(r.reasonLabel)}" />
         <button type="button" class="red" data-act="ban">정지하고 처리 완료</button>`}
+        ${r.reporterCard?.deleted ? '' : '<button type="button" class="ghost" data-act="ban-reporter" title="악의적인 허위 신고로 판단될 때: 신고자를 정지하고 이 신고는 기각">허위 신고 · 신고자 정지</button>'}
         ${r.status !== 'resolved' ? '<button type="button" class="pk" data-act="resolve">처리 완료</button>' : ''}
         ${r.status !== 'dismissed' ? '<button type="button" class="ghost" data-act="dismiss">기각</button>' : ''}
         ${r.status !== 'open' ? '<button type="button" class="ghost" data-act="reopen">다시 접수로</button>' : ''}
@@ -233,6 +235,11 @@ function renderReports(list) {
             const days = Number(card.querySelector('.days').value);
             await api('/api/admin/ban', { userId: r.target, days: days || null, reason: card.querySelector('.reason-in').value, reportId: id, note });
             toast(days ? `${days}일 정지했어` : '영구 정지했어');
+          } else if (b.dataset.act === 'ban-reporter') {
+            const days = Number(card.querySelector('.days')?.value ?? 7);
+            if (!confirm(`신고한 사람을 허위 신고로 ${days ? `${days}일` : '영구'} 정지하고 이 신고는 기각할까?`)) { b.disabled = false; return; }
+            await api('/api/admin/ban', { userId: r.reporter, days: days || null, reason: '허위 신고', reportId: id, note, about: 'reporter' });
+            toast('신고자를 정지했어');
           } else {
             const status = { resolve: 'resolved', dismiss: 'dismissed', reopen: 'open' }[b.dataset.act];
             await api(`/api/admin/reports/${id}`, { status, note });

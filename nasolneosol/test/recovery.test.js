@@ -37,7 +37,7 @@ test('파일 저장소 복원 후 두 서버가 같은 대화 기록과 서로 �
   };
   const current = await start(original);
   const people = ['male', 'female'].map((gender) =>
-    current.app.store.createUser({ gender, age: 29, job: 'fixture', region: 'fixture' })
+    current.app.store.createUser({ birthDate: '1995-06-15', gender, age: 29, job: 'fixture', region: 'fixture' })
   );
   const [a, b] = people;
   current.app.rel.recordGame({

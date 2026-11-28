@@ -3,7 +3,8 @@
 // 규칙
 // - 친구 신청은 같은 게임에서 만난 사람에게, 또는 상대 아이디를 아는 경우에 할 수 있다
 //   (아이디 신청은 하루 횟수 제한 · 상대가 수락해야 친구)
-// - 1:1 메시지는 친구이거나 최종 매칭된 상대끼리만 주고받는다
+// - 친구는 같은 성별끼리만 맺는다 (canFriend). 이성과는 최종 선택에서 서로 고른(매칭된) 경우에만 대화한다
+// - 1:1 메시지는 같은 성별 친구이거나 최종 매칭된 상대끼리만 주고받는다
 // - 한쪽이라도 차단하면 신청·메시지가 모두 막히고 목록에서 숨는다
 //
 // 시제품: data/relations.json 한 파일에 저장한다. [임시] 실제 서비스에서는 DB 로 옮긴다.
@@ -27,9 +28,14 @@ const fail = (m) => { throw new RelationError(m); };
 const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 export class Relations {
-  constructor(dir, { now = Date.now } = {}) {
+  /**
+   * @param {{ now?: () => number, canFriend?: (a: string, b: string) => boolean }} [o]
+   *   canFriend: 친구를 맺고 친구로서 대화할 수 있는 사이인지 (서비스: 같은 성별끼리만. 이성은 최종 매칭돼야 대화)
+   */
+  constructor(dir, { now = Date.now, canFriend = () => true } = {}) {
     this.file = dir ? path.join(dir, 'relations.json') : null;
     this.now = now;
+    this.canFriend = canFriend;
     this.met = new Map(); // userId → Map(otherId → { at, roomId, alias })
     this.matches = new Map(); // userId → [{ partnerId, roomId, at, alias }]
     this.friends = new Map(); // userId → Set(otherId)
@@ -113,7 +119,7 @@ export class Relations {
     return !!this.met.get(a)?.has(b);
   }
   canMessage(a, b) {
-    return a !== b && !this.isBlocked(a, b) && (this.areFriends(a, b) || this.isMatched(a, b));
+    return a !== b && !this.isBlocked(a, b) && ((this.areFriends(a, b) && this.canFriend(a, b)) || this.isMatched(a, b));
   }
   /** 이 사람을 부를 이름: 함께한 게임에서의 가명 */
   aliasFor(me, other) {
@@ -136,6 +142,7 @@ export class Relations {
   request(from, to, { direct = false } = {}) {
     if (from === to) fail('나에게는 신청할 수 없어');
     if (this.isBlocked(from, to)) fail('친구 신청을 보낼 수 없는 상대야');
+    if (!this.canFriend(from, to)) fail('친구 추가는 같은 성별끼리만 할 수 있어. 이성과는 최종 선택에서 서로 고르면 메시지를 주고받을 수 있어');
     if (!direct && !this.hasMet(from, to)) fail('같은 게임에서 만난 사람에게만 신청할 수 있어');
     if (this.areFriends(from, to)) fail('이미 친구야');
     if ((this.friends.get(from)?.size ?? 0) >= LIMITS.friends) fail('친구가 너무 많아');
@@ -161,6 +168,10 @@ export class Relations {
     const m = this.requests.get(me);
     if (!m?.has(from)) fail('받은 신청이 없어');
     m.delete(from);
+    if (accept && !this.canFriend(me, from)) {
+      this.persist();
+      fail('친구 추가는 같은 성별끼리만 할 수 있어');
+    }
     if (accept && !this.isBlocked(me, from)) {
       for (const [a, b] of [[me, from], [from, me]]) {
         const s = this.friends.get(a) ?? new Set();
@@ -229,7 +240,7 @@ export class Relations {
     const t = String(text ?? '').replace(/\s+$/u, '').replace(/^\s+/u, '');
     if (!t) fail('내용을 입력해 줘');
     if (t.length > LIMITS.messageLen) fail(`메시지는 ${LIMITS.messageLen}자까지 보낼 수 있어`);
-    if (!this.canMessage(from, to)) fail('친구이거나 최종 매칭된 상대에게만 메시지를 보낼 수 있어');
+    if (!this.canMessage(from, to)) fail('최종 선택에서 서로 고른 상대나 같은 성별 친구에게만 메시지를 보낼 수 있어');
     const now = this.now();
     if (now - (this.lastSent.get(from) ?? 0) < LIMITS.minGapMs) fail('너무 빨리 보내고 있어. 잠깐만 기다려 줘');
     this.lastSent.set(from, now);

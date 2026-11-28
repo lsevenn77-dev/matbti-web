@@ -10,7 +10,7 @@ export const REPORT_REASONS = {
   contact: '원치 않는 연락처·만남 요구',
   fake: '사칭·허위 프로필',
   spam: '스팸·홍보·금전 요구',
-  minor: '미성년자로 보임',
+  minor: '미성년자 의심 · 나이 허위 등록',
   other: '기타',
 };
 export const REPORT_STATUS = { open: '접수', resolved: '처리 완료', dismissed: '기각' };

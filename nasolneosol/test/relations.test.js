@@ -49,7 +49,7 @@ test('메시지는 친구 또는 최종 매칭 상대끼리만, 안 읽은 수�
   let t = 1000;
   const rel = new Relations(null, { now: () => (t += 1000) });
   game(rel);
-  assert.throws(() => rel.send('a', 'y', '안녕'), /친구이거나 최종 매칭/);
+  assert.throws(() => rel.send('a', 'y', '안녕'), /서로 고른 상대나 같은 성별 친구/);
   rel.send('a', 'x', '안녕하세요'); // 매칭 상대
   rel.send('x', 'a', '반가워요');
   assert.equal(rel.unreadTotal('a'), 1);
@@ -81,9 +81,9 @@ test('HTTP: 친구 신청 → 수락 → 메시지', async () => {
   const port = await app.listen(0);
   const base = `http://127.0.0.1:${port}`;
   try {
-    const a = app.store.createUser({ gender: 'male', age: 30, job: 'a', region: 'b' });
-    const b = app.store.createUser({ gender: 'male', age: 31, job: 'a', region: 'b' });
-    const x = app.store.createUser({ gender: 'female', age: 29, job: 'a', region: 'b' });
+    const a = app.store.createUser({ birthDate: '1995-06-15', gender: 'male', age: 30, job: 'a', region: 'b' });
+    const b = app.store.createUser({ birthDate: '1995-06-15', gender: 'male', age: 31, job: 'a', region: 'b' });
+    const x = app.store.createUser({ birthDate: '1995-06-15', gender: 'female', age: 29, job: 'a', region: 'b' });
     app.rel.recordGame({ roomId: 'r', people: [{ userId: a.id, alias: '영수' }, { userId: b.id, alias: '영호' }, { userId: x.id, alias: '영숙' }], couples: [[a.id, x.id]] });
     const call = async (u, path, body) => {
       const r = await fetch(base + path, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${u.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -108,6 +108,20 @@ test('HTTP: 친구 신청 → 수락 → 메시지', async () => {
     await new Promise((r) => setTimeout(r, 450));
     assert.equal((await call(a, '/api/messages', { to: x.id, text: '반가워요' })).status, 200); // 매칭 상대
     assert.equal((await call(x, '/api/messages', { to: b.id, text: '?' })).status, 400); // 친구도 매칭도 아님
+    // 이성은 친구 신청이 안 되고, 함께한 사람 목록에서도 친구 신청 대상이 아니다
+    const fr = await call(x, '/api/friends/request', { userId: b.id });
+    assert.equal(fr.status, 400);
+    assert.match(fr.body.error, /같은 성별/);
+    const sx = await call(x, '/api/social');
+    assert.equal(sx.body.met.find((m) => m.id === b.id).canFriend, false);
+    assert.equal(sx.body.met.find((m) => m.id === a.id).matched, true);
+    // 예전에 맺어 둔 이성 친구: 목록에서 빠지고 대화도 막힌다 (매칭 상대는 그대로 대화)
+    app.rel.friends.set(b.id, new Set([...(app.rel.friends.get(b.id) ?? []), x.id]));
+    app.rel.friends.set(x.id, new Set([b.id]));
+    assert.ok(!(await call(x, '/api/social')).body.friends.some((c) => c.id === b.id));
+    await new Promise((r) => setTimeout(r, 450));
+    assert.equal((await call(x, '/api/messages', { to: b.id, text: '?' })).status, 400);
+    assert.equal((await call(x, '/api/messages', { to: a.id, text: '저도 반가워요' })).status, 200);
     assert.equal((await call(a, '/api/social')).status, 200);
     assert.equal((await fetch(base + '/api/social')).status, 401);
   } finally {

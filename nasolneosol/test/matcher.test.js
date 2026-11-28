@@ -35,8 +35,24 @@ test('조건이 안 맞는 사람은 건너뛰고, 맞는 12명이 모이면 방
   assert.ok(!g.includes(q[6]));
 });
 
+test('생년월일: 만 19세 미만 가입 불가(한국 날짜 기준), 이상한 날짜 거부, 가입 후 수정 불가', async () => {
+  const { validateBirthDate, ageFromBirthDate } = await import('../server/store.js');
+  const now = Date.parse('2026-11-28T12:00:00+09:00');
+  assert.equal(ageFromBirthDate('2007-11-28', now), 19); // 오늘 만 19세 생일
+  assert.equal(ageFromBirthDate('2007-11-29', now), 18); // 내일 생일
+  assert.equal(validateBirthDate('2007-11-28', { minAge: 19, now }).age, 19);
+  assert.throws(() => validateBirthDate('2007-11-29', { minAge: 19, now }), /만 19세 이상/);
+  // 한국 자정 직후: UTC로는 아직 전날이어도 한국 날짜로 생일이 지났으면 19세
+  assert.equal(ageFromBirthDate('2007-11-28', Date.parse('2026-11-28T00:30:00+09:00')), 19);
+  for (const bad of ['', '2000-02-30', '2000/01/01', '1899-01-01', '2030-01-01', 'abc']) assert.throws(() => validateBirthDate(bad, { minAge: 19, now }), undefined, bad);
+  assert.throws(() => validateProfile({ gender: 'male', job: 'x', region: 'y' }, { minAge: 19 }), /생년월일/);
+  assert.throws(() => validateProfile({ age: 25 }, { minAge: 19, partial: true }), /바꿀 수 없어/);
+  assert.throws(() => validateProfile({ birthDate: '1990-01-01' }, { minAge: 19, partial: true }), /바꿀 수 없어/);
+  assert.equal(validateProfile({ job: '개발자' }, { minAge: 19, partial: true }).job, '개발자');
+});
+
 test('가입: 나이 조건 검사 (비우면 40 = 상관없음)', () => {
-  const base = { gender: 'male', age: 30, job: 'x', region: 'y' };
+  const base = { gender: 'male', birthDate: '1995-06-15', job: 'x', region: 'y' };
   assert.equal(validateProfile(base, { minAge: 19 }).ageUp, 40);
   assert.equal(validateProfile({ ...base, ageUp: 3, ageDown: 0 }, { minAge: 19 }).ageDown, 0);
   assert.throws(() => validateProfile({ ...base, ageUp: 41 }, { minAge: 19 }));

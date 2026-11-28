@@ -34,6 +34,7 @@ export class FileStore {
         this.tokens.set(u.token, u.id);
         for (const k of u.identities ?? []) this.identities.set(k, u.id);
         if (u.handle) this.handles.set(u.handle, u.id);
+        refreshAge(u);
       }
     }
     const o = path.join(this.dir, 'orders.json');
@@ -223,17 +224,54 @@ export function validateHandle(input) {
   return h;
 }
 
-/** 프로필 입력 검증. 실명·상세주소·연락처·생년월일은 받지 않는다. */
+// ── 생년월일 (연령 확인) ──
+// 만 나이는 한국 시간 기준 오늘 날짜로 계산한다. 생년월일은 가입 후 바꿀 수 없다 (본인인증을 붙이면 그 결과로 덮어쓴다).
+export const ADULT_CONSENT_TEXT = '본인은 만 19세 이상이며, 입력한 생년월일이 사실임을 확인합니다. 미성년자의 이용 및 허위 정보 등록이 확인될 경우 서비스 이용이 제한될 수 있습니다.';
+
+/** 'YYYY-MM-DD' → 만 나이 (한국 시간 기준) */
+export function ageFromBirthDate(birthDate, now = Date.now()) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(birthDate ?? ''));
+  if (!m) return null;
+  const today = new Date(now + 9 * 3600 * 1000); // KST
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  let age = today.getUTCFullYear() - y;
+  if (today.getUTCMonth() + 1 < mo || (today.getUTCMonth() + 1 === mo && today.getUTCDate() < d)) age--;
+  return age;
+}
+
+/** 생년월일 검증. 만 minAge 세 미만이면 가입할 수 없다 */
+export function validateBirthDate(input, { minAge, now = Date.now() }) {
+  const s = String(input ?? '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) throw new Error('생년월일을 입력해 줘');
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (dt.getUTCFullYear() !== Number(m[1]) || dt.getUTCMonth() + 1 !== Number(m[2]) || dt.getUTCDate() !== Number(m[3])) throw new Error('생년월일이 올바르지 않아');
+  const age = ageFromBirthDate(s, now);
+  if (age == null || age < 0 || Number(m[1]) < 1900) throw new Error('생년월일이 올바르지 않아');
+  if (age < minAge) throw new Error(`만 ${minAge}세 이상만 가입할 수 있어`);
+  if (age > 100) throw new Error('생년월일이 올바르지 않아');
+  return { birthDate: s, age };
+}
+
+/** 저장된 생년월일로 만 나이를 다시 맞춘다 (생일이 지나면 한 살 올라감) */
+export function refreshAge(user, now = Date.now()) {
+  const a = ageFromBirthDate(user?.profile?.birthDate, now);
+  if (a != null && user.profile.age !== a) user.profile.age = a;
+  return user;
+}
+
+/** 프로필 입력 검증. 실명·상세주소·연락처는 받지 않는다. 생년월일은 연령 확인용으로만 받는다 (다른 사람에게는 만 나이만 보임) */
 export function validateProfile(input, { minAge, partial = false }) {
   const out = {};
   if (!partial || input.gender != null) {
     if (!['male', 'female'].includes(input.gender)) throw new Error('성별을 선택해 줘');
     out.gender = input.gender;
   }
-  if (!partial || input.age != null) {
-    const age = Number(input.age);
-    if (!Number.isInteger(age) || age < minAge || age > 80) throw new Error(`나이는 ${minAge}~80 사이 숫자로 입력해 줘`);
-    out.age = age;
+  if (!partial) {
+    // 가입: 생년월일 필수, 나이는 생년월일로 계산
+    Object.assign(out, validateBirthDate(input.birthDate, { minAge }));
+  } else if (input.age != null || input.birthDate != null) {
+    throw new Error('나이·생년월일은 가입 후 바꿀 수 없어. 잘못 입력했다면 고객센터로 알려 줘');
   }
   // 만나고 싶은 상대 나이: 내 나이보다 위로·아래로 몇 살까지 (0~40, 40 = 사실상 상관없음)
   for (const [k, label] of [['ageUp', '위로'], ['ageDown', '아래로']]) {

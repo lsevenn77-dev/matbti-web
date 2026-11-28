@@ -9,7 +9,7 @@ async function setup(env = { ADMIN_KEY: KEY }) {
   const app = createServer({ dataDir: null, env: { DEV_TOOLS: '0', ...env } });
   const port = await app.listen(0);
   const base = `http://127.0.0.1:${port}`;
-  const mk = (gender, age) => app.store.createUser({ gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
+  const mk = (gender, age) => app.store.createUser({ birthDate: '1995-06-15', gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
   const admin = async (path, body, key = KEY) => {
     const r = await fetch(base + path, { method: body ? 'POST' : 'GET', headers: { 'x-admin-key': key, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     return { status: r.status, body: await r.json() };

@@ -10,7 +10,7 @@ async function setup(env = {}) {
   const app = createServer({ dataDir: null, env: { DEV_TOOLS: '0', ...env } });
   const port = await app.listen(0);
   const base = `http://127.0.0.1:${port}`;
-  const mk = (gender, age) => app.store.createUser({ gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
+  const mk = (gender, age) => app.store.createUser({ birthDate: '1995-06-15', gender, age, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
   const call = async (u, path, body) => {
     const r = await fetch(base + path, { method: body ? 'POST' : 'GET', headers: { ...(u ? { Authorization: `Bearer ${u.token}` } : {}), 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     return { status: r.status, body: await r.json() };
@@ -30,7 +30,7 @@ test('아이디: 중복 불가, 가입 때 정하고, 아이디로 찾아 모르
   const { app, mk, call } = await setup();
   try {
     const a = mk('male', 30);
-    const b = mk('female', 29);
+    const b = mk('male', 29);
     assert.equal((await call(a, '/api/me/handle', { handle: 'Minsu' })).body.handle, 'minsu');
     // 다른 사람이 같은 아이디(대소문자만 다른 것 포함)는 못 쓴다
     assert.equal((await call(b, '/api/me/handle', { handle: 'MINSU' })).status, 400);
@@ -70,7 +70,7 @@ test('아이디 신청은 하루 20번까지', async () => {
   try {
     const a = mk('male', 30);
     for (let i = 0; i < 21; i++) {
-      const u = mk('female', 25);
+      const u = mk('male', 25);
       app.store.setHandle(u.id, `girl${i}x`);
       const r = await call(a, '/api/friends/request', { handle: `girl${i}x` });
       assert.equal(r.status, i < 20 ? 200 : 400, `#${i}`);
@@ -104,7 +104,7 @@ test('무단 이탈: 3분 넘게 한 번에 나가 있던 사람만, 최종 선�
 test('WS: 게임 중 나가서 안 돌아오면 이탈 기록 → 30일 안 2회째는 24시간 입장 제한, 끝까지 한 사람은 그대로', async () => {
   const app = createServer({ dataDir: null, env: { DEV_TOOLS: '1' }, config: { leavePenalty: { absentSec: 0.3 } } });
   const port = await app.listen(0);
-  const mk = (gender) => app.store.createUser({ gender, age: 30, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
+  const mk = (gender) => app.store.createUser({ birthDate: '1995-06-15', gender, age: 30, ageUp: 40, ageDown: 40, job: 'a', region: 'b', photoUrl: '/x' });
   const users = [];
   for (let i = 0; i < 6; i++) users.push(mk('male'), mk('female'));
   const [leaver, stayer, repeat] = users;

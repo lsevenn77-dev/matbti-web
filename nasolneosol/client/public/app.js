@@ -139,8 +139,8 @@ function showSignup(editing = false) {
   $('#pf-ok').hidden = !st.signupTicket || editing;
   f.handle.value = editing ? st.me?.handle ?? '' : f.handle.value;
   setHandleHint('');
+  setupBirthField(editing);
   if (editing && st.me) {
-    f.age.value = st.me.profile.age;
     f.job.value = st.me.profile.job;
     f.region.value = st.me.profile.region;
     f.ageUp.value = st.me.profile.ageUp ?? 40;
@@ -150,16 +150,57 @@ function showSignup(editing = false) {
     $('#photo-preview').hidden = false;
     $('#photo-hint').hidden = true;
   }
-  if (st.info) f.age.min = st.info.minAge;
   if (!editing) restoreDraft();
 }
+
+// ── 생년월일 · 성인 확인 ──
+const MIN_AGE = () => st.info?.minAge ?? 19;
+/** 한국 날짜 기준 만 나이 (서버와 같은 계산) */
+function ageFromBirth(b) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(b || '');
+  if (!m) return null;
+  const t = new Date(Date.now() + 9 * 3600 * 1000);
+  let a = t.getUTCFullYear() - Number(m[1]);
+  if (t.getUTCMonth() + 1 < Number(m[2]) || (t.getUTCMonth() + 1 === Number(m[2]) && t.getUTCDate() < Number(m[3]))) a--;
+  return a;
+}
+/** 만 19세가 되는 마지막 생년월일 (오늘 한국 날짜 - 19년) */
+function maxBirthDate() {
+  const t = new Date(Date.now() + 9 * 3600 * 1000);
+  const y = t.getUTCFullYear() - MIN_AGE();
+  const md = `${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
+  return md === '02-29' && !(y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? `${y}-02-28` : `${y}-${md}`;
+}
+/** 가입: 입력 / 수정: 이미 있으면 잠금 표시, 예전 회원이라 없으면 한 번 입력 */
+function setupBirthField(editing) {
+  const f = $('#signup-form');
+  const locked = editing && st.me?.profile?.birthDate;
+  f.birthDate.max = maxBirthDate();
+  f.birthDate.hidden = !!locked;
+  f.birthDate.required = !locked;
+  $('#birth-locked').hidden = !locked;
+  if (locked) $('#birth-locked').textContent = `${st.me.profile.birthDate} · 만 ${st.me.profile.age}세 (바꾸려면 고객센터로 알려 줘)`;
+  else if (editing) f.birthDate.value = '';
+  $('#adult-consent-row').hidden = !!locked;
+  f.adultConsent.checked = false;
+  f.adultConsent.required = !locked;
+  $('#birth-hint').textContent = !locked && editing ? '게임에 들어가려면 생년월일을 한 번 입력해 줘.' : '';
+  $('#birth-hint').className = 'tiny';
+}
+$('#signup-form').birthDate.addEventListener('change', (e) => {
+  const a = ageFromBirth(e.target.value);
+  const el = $('#birth-hint');
+  if (a == null) { el.textContent = ''; return; }
+  el.textContent = a < MIN_AGE() ? `만 ${MIN_AGE()}세 이상만 가입할 수 있어` : `만 ${a}세`;
+  el.className = `tiny ${a < MIN_AGE() ? 'bad' : 'ok'}`;
+});
 
 // 가입 입력 임시 저장: 사진 고르는 사이 폰 브라우저가 페이지를 다시 불러와도 입력이 남게
 const DRAFT_KEY = 'nsns_signup_draft';
 function saveDraft() {
   const f = $('#signup-form');
   if (f.dataset.editing === '1') return;
-  const d = { handle: f.handle.value, gender: f.gender.value, age: f.age.value, job: f.job.value, region: f.region.value, ageUp: f.ageUp.value, ageDown: f.ageDown.value, photo: photoData };
+  const d = { handle: f.handle.value, gender: f.gender.value, birthDate: f.birthDate.value, job: f.job.value, region: f.region.value, ageUp: f.ageUp.value, ageDown: f.ageDown.value, photo: photoData };
   // localStorage: 폰이 사진 앱을 여는 동안 브라우저를 아예 종료해도 남는다
   try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, photo: null })); } catch {}
@@ -172,7 +213,7 @@ function restoreDraft() {
   const f = $('#signup-form');
   for (const r of f.gender) r.checked = r.value === d.gender;
   if (d.handle) f.handle.value = d.handle;
-  if (d.age) f.age.value = d.age;
+  if (d.birthDate) f.birthDate.value = d.birthDate;
   if (d.job) f.job.value = d.job;
   if (d.region) f.region.value = d.region;
   if (d.ageUp !== undefined && d.ageUp !== '') f.ageUp.value = d.ageUp;
@@ -255,12 +296,29 @@ $('#signup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   const editing = f.dataset.editing === '1';
-  const body = { gender: f.gender.value, age: Number(f.age.value), job: f.job.value, region: f.region.value, ageUp: Number(f.ageUp.value), ageDown: Number(f.ageDown.value) };
+  const body = { gender: f.gender.value, job: f.job.value, region: f.region.value, ageUp: Number(f.ageUp.value), ageDown: Number(f.ageDown.value) };
+  // 생년월일: 가입할 때(또는 예전 회원이 처음 입력할 때)만. 화면에서도 만 19세 미만은 막는다
+  const needBirth = !editing || !st.me?.profile?.birthDate;
+  if (needBirth) {
+    const a = ageFromBirth(f.birthDate.value);
+    if (a == null) return ($('#signup-error').textContent = '생년월일을 입력해 줘');
+    if (a < MIN_AGE()) return ($('#signup-error').textContent = `만 ${MIN_AGE()}세 이상만 가입할 수 있어`);
+    if (!f.adultConsent.checked) return ($('#signup-error').textContent = '만 19세 이상 확인에 동의해 줘');
+    if (!editing) Object.assign(body, { birthDate: f.birthDate.value, adultConsent: true });
+  }
   if (st.signupTicket && !editing) body.signupTicket = st.signupTicket;
   if (photoData) body.photo = photoData;
   if (!editing && !photoData) return ($('#signup-error').textContent = '프로필 사진을 선택해 줘');
   const handle = f.handle.value.trim().toLowerCase();
   if (!editing) body.handle = handle;
+  // 수정: 예전 회원이 생년월일을 처음 입력
+  if (editing && needBirth) {
+    try {
+      st.me = await api('/api/me/birthdate', { birthDate: f.birthDate.value, adultConsent: true });
+    } catch (err) {
+      return ($('#signup-error').textContent = err.message);
+    }
+  }
   // 수정: 아이디가 바뀌었으면 먼저 바꾼다
   if (editing && handle && handle !== st.me?.handle) {
     try {
@@ -371,6 +429,11 @@ function showLobbyName() {
   const p = st.me.profile;
   $('#lobby-name').innerHTML = `${G[p.gender]} · ${p.age}세 ${st.me.handle ? `<span class="me-handle">@${esc(st.me.handle)}</span>` : '<button type="button" class="me-handle need" id="btn-set-handle">아이디 정하기</button>'}`;
   $('#btn-set-handle')?.addEventListener('click', () => openSocial('friends', 'add'));
+  // 예전 회원: 생년월일을 입력해야 게임에 들어갈 수 있다
+  if (st.me.needBirthDate) {
+    $('#lobby-name').insertAdjacentHTML('beforeend', ' <button type="button" class="me-handle need" id="btn-set-birth">생년월일 입력 필요</button>');
+    $('#btn-set-birth').addEventListener('click', () => showSignup(true));
+  }
 }
 /** 무단 이탈 안내 (대기 화면) */
 function renderLeaveNote() {
@@ -420,7 +483,7 @@ for (const b of document.querySelectorAll('#tb-nav button')) {
 $('#btn-settings').addEventListener('click', () => openModal('#modal-settings'));
 
 // ───────────── 친구 · 나의 인연 · 메시지 ─────────────
-// 규칙(서버와 같음): 친구 신청은 같은 게임에서 만난 사람에게만, 메시지는 친구이거나 최종 매칭된 상대끼리만
+// 규칙(서버와 같음): 친구는 같은 성별끼리만(함께한 사람·아이디로 신청). 메시지는 같은 성별 친구, 또는 최종 선택에서 서로 고른 이성끼리만
 const soc = { data: null, mode: 'friends', sub: 'list', dmWith: null, timer: null, loading: null };
 const GS = { male: '♂', female: '♀' };
 function ago(at) {
@@ -514,7 +577,7 @@ function renderSocial() {
   if (soc.mode === 'friends' && soc.sub === 'list') {
     html = d.friends.length
       ? d.friends.map((c) => personRow(c, `<button type="button" class="ic" data-act="chat" aria-label="대화하기">💬</button>`)).join('')
-      : '<p class="empty">아직 친구가 없어.<br>"아이디로 추가"에서 친구 아이디로 신청하거나, "함께한 사람"에서 게임에서 만난 사람에게 신청할 수 있어.</p>';
+      : '<p class="empty">아직 친구가 없어.<br>친구 추가는 같은 성별끼리만 할 수 있어. "아이디로 추가"나 "함께한 사람"에서 신청해 봐.<br>이성과는 최종 선택에서 서로 고르면 💗 나의 인연에서 메시지를 주고받을 수 있어.</p>';
   } else if (soc.mode === 'friends' && soc.sub === 'incoming') {
     html = '<h4 class="soc-sec">받은 신청</h4>' + (d.incoming.length
       ? d.incoming.map((c) => personRow(c, `<button type="button" class="pill-btn pk" data-act="accept">수락</button><button type="button" class="pill-btn" data-act="decline">거절</button><button type="button" class="ic sm" data-act="block" aria-label="차단" title="차단">🚫</button>`, `<span class="st">${ago(c.at)} 신청${c.alias ? '' : ' · 아이디로 신청'}</span>`)).join('')
@@ -523,12 +586,12 @@ function renderSocial() {
     if (sent.length) html += '<h4 class="soc-sec">보낸 신청</h4>' + sent.map((c) => personRow(c, '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>', `<span class="st">${ago(c.at)} 보냄 · 수락 기다리는 중</span>`)).join('');
   } else if (soc.mode === 'friends' && soc.sub === 'met') {
     html = d.met.length
-      ? `<p class="hint">같은 게임에서 만난 사람에게 바로 친구 신청을 할 수 있어.</p>` + d.met.map((c) => personRow(c,
-        (c.friend ? '<span class="tag">친구</span>' : c.requested ? '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>' : '<button type="button" class="pill-btn pk" data-act="request">친구 신청</button>') + '<button type="button" class="ic sm" data-act="report" aria-label="신고" title="신고">🚨</button>',
+      ? `<p class="hint">같은 성별이면 친구 신청을 할 수 있어. 이성은 최종 선택에서 서로 고른 경우에만 대화할 수 있어.</p>` + d.met.map((c) => personRow(c,
+        (c.friend ? '<span class="tag">친구</span>' : c.canFriend === false ? (c.matched ? '<button type="button" class="pill-btn pk" data-act="chat">대화하기</button>' : '') : c.requested ? '<button type="button" class="pill-btn" data-act="cancel">신청 취소</button>' : '<button type="button" class="pill-btn pk" data-act="request">친구 신청</button>') + '<button type="button" class="ic sm" data-act="report" aria-label="신고" title="신고">🚨</button>',
         `<span class="st">${dateLabel(c.at)} 함께함</span>`)).join('')
       : '<p class="empty">아직 함께한 사람이 없어. 게임을 한 판 하면 여기에 나와.</p>';
   } else if (soc.mode === 'matches') {
-    html = `<p class="hint">서로를 최종 선택한 상대야. 게임 밖 1:1 대화에서 원할 때 연락처를 나눌 수 있어.</p>` + (d.matches.length
+    html = `<p class="hint">서로를 최종 선택한 상대야. 게임 밖 1:1 대화를 이어갈 수 있어. 나솔너솔은 연락처를 제공하거나 교환을 중개하지 않으니, 개인정보 공유는 신중하게 직접 판단해 줘.</p>` + (d.matches.length
       ? d.matches.map((c) => personRow(c, `<button type="button" class="pill-btn pk" data-act="chat">대화하기</button>`, `<span class="tag pk">매칭 성공 💗</span> <span class="st">${dateLabel(c.at)} 게임</span>`)).join('')
       : '<p class="empty">아직 매칭된 인연이 없어. 최종 선택에서 서로를 고르면 여기에 나와.</p>');
   } else if (soc.mode === 'messages') {
@@ -557,7 +620,7 @@ function renderAddFriend(body) {
         <button class="pill-btn pk" type="submit">찾기</button>
       </form>
       <div id="af-result"></div>
-      <p class="hint">상대가 수락해야 친구가 돼. 모르는 사람의 신청은 거절하거나 차단할 수 있어.</p>
+      <p class="hint">친구 추가는 같은 성별끼리만 할 수 있고, 상대가 수락해야 친구가 돼. 모르는 사람의 신청은 거절하거나 차단할 수 있어.</p>
     </div>`;
   $('#af-copy')?.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(mine); toastLobby('아이디를 복사했어'); } catch { toastLobby(`내 아이디: @${mine}`); }
@@ -583,6 +646,7 @@ function renderAddFriend(body) {
     try {
       const c = await api(`/api/users/find?handle=${encodeURIComponent(h)}`);
       const act = c.self ? '<span class="tag">나</span>'
+        : c.canFriend === false ? '<span class="tag">이성은 친구 추가 불가</span>'
         : c.friend ? '<span class="tag">이미 친구</span>'
         : c.incoming ? '<button type="button" class="pill-btn pk" data-act="accept">신청 수락</button>'
         : c.requested ? '<span class="tag">신청 보냄</span>'
@@ -661,7 +725,7 @@ async function openDm(id) {
     $('#dm-state').innerHTML = `${j.matched ? '💗 매칭 · ' : j.friend ? '친구 · ' : ''}${presence(c)}`;
     $('#dm-unfriend').hidden = !j.friend;
     $('#dm-form').hidden = !j.canMessage;
-    $('#dm-note').textContent = j.canMessage ? '상대를 존중해 줘. 불쾌한 대화는 ⋯ 에서 차단할 수 있어.' : '친구이거나 최종 매칭된 상대에게만 메시지를 보낼 수 있어.';
+    $('#dm-note').textContent = j.canMessage ? '상대를 존중해 줘. 불쾌한 대화는 ⋯ 에서 차단할 수 있어.' : '최종 선택에서 서로 고른 상대나 같은 성별 친구에게만 메시지를 보낼 수 있어.';
     $('#dm-log').innerHTML = j.messages.length ? '' : '<p class="empty">첫 메시지를 보내 봐 👋</p>';
     for (const m of j.messages) appendDm(m);
     if (j.canMessage && matchMedia('(pointer: fine)').matches) $('#dm-input').focus();
@@ -734,7 +798,7 @@ const REPORT_REASONS = {
   contact: '원치 않는 연락처·만남 요구',
   fake: '사칭·허위 프로필',
   spam: '스팸·홍보·금전 요구',
-  minor: '미성년자로 보임',
+  minor: '미성년자 의심 · 나이 허위 등록',
   other: '기타',
 };
 let reportCtx = null;
@@ -1147,6 +1211,11 @@ function onMessage(m) {
   } else if (m.t === 'queueError') {
     $('#queue-msg').textContent = m.error;
     toastLobby(m.error);
+    if (m.needBirthDate && st.me) {
+      st.me.needBirthDate = true;
+      showSignup(true);
+      $('#signup-form').birthDate.focus();
+    }
     if (/입장권/.test(m.error)) {
       $('#wallet-box').classList.add('empty');
       $('#wallet-box').scrollIntoView({ behavior: 'smooth', block: 'center' });
